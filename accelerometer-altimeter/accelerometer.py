@@ -4,6 +4,11 @@ import math
 
 # (incredibly) lightly adapted from https://how2electronics.com/interfacing-mpu6050-with-raspberry-pi-pico-micropython/
 
+
+# TODO:
+# * Implement calibration, see guide: https://shillehtek.com/blogs/news/how-to-calibrate-mpu6050
+# * Tweak configuration from defaults (and honestly use like constants or something) see implementation in https://github.com/shillehbean/youtube-channel/blob/main/imu.py and full description in MPU-6000/MPU-6050 Register Map and Descriptions
+
 PWR_MGMT_1 = 0x6B
 SMPLRT_DIV = 0x19
 CONFIG = 0x1A

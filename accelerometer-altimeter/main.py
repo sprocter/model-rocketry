@@ -16,12 +16,16 @@ prev_time = utime.ticks_ms()
 
 while True:
         TICK_RATE_MS = 1000
-
+        CURR_BARO_PRESSURE = 1025
         ###
         # ALTIMETER READING AND PRINTING
         ###
         print("Temperature: " + str(bme.values[0]))
-        print("Pressure: " + str(bme.values[1]))
+        print("Pressure: " + str(bme.values[1]) + " hPa")
+        
+        # From https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf except using current pressure instead of default, which is 1013.25
+        print("Altitude: " + str((1-((float(bme.values[1])/CURR_BARO_PRESSURE) ** .190284)) * 145366.45) + "ft above sea level")
+        
         print("Humidity: " + str(bme.values[2]))
 
         ###

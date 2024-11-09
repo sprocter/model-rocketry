@@ -6,6 +6,9 @@ from array import array
 
 # lightly adapted from https://how2electronics.com/bme280-raspberry-pi-pico-w-web-server-weather-station/
 
+# TODO
+# * Add calibration? Or at least track down configuration options to make sure that all makes sense.
+
 # BME280 default address.
 BME280_I2CADDR = 0x76
 
@@ -202,7 +205,8 @@ class BME280:
         hd = h * 100 // 1024 - hi * 100
         return (
             "{}*C".format(t / 100),
-            "{}.{:02d} hPa".format(pi, pd),
+            #"{}.{:02d} hPa".format(pi, pd),
+            "{}.{:02d}".format(pi, pd),
             "{}.{:02d} %".format(hi, hd),
         )
 
@@ -211,7 +215,7 @@ def runStandalone():
 
     while True:
         TICK_RATE_MS = 1000
-        bme = BME280(i2c=i2c, mode=BME280_OSAMPLE_16)  # BME280 object created
+        bme = BME280(i2c=i2c, mode=BME280_OSAMPLE_16)
         print("Temperature: " + str(bme.values[0]))
         print("Pressure: " + str(bme.values[1]))
         print("Humidity: " + str(bme.values[2]))
