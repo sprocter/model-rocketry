@@ -12,36 +12,96 @@ from array import array
 # BME280 default address.
 BME280_I2CADDR = 0x76
 
-# Operating Modes
-BME280_OSAMPLE_1 = 1
-BME280_OSAMPLE_2 = 2
-BME280_OSAMPLE_4 = 3
-BME280_OSAMPLE_8 = 4
-BME280_OSAMPLE_16 = 5
+# # Operating Modes
+# BME280_OSAMPLE_1 = 1
+# BME280_OSAMPLE_2 = 2
+# BME280_OSAMPLE_4 = 3
+# BME280_OSAMPLE_8 = 4
+# BME280_OSAMPLE_16 = 5
+
+# Humidity Oversample Modes
+BME280_HUM_OFF = 0b000
+BME280_HUM_OSMPL_1 = 0b001
+BME280_HUM_OSMPL_2 = 0b010
+BME280_HUM_OSMPL_4 = 0b011
+BME280_HUM_OSMPL_8 = 0b100
+BME280_HUM_OSMPL_16 = 0b101
+
+# Temperature Oversample Modes
+BME280_TEMP_OFF = 0b000
+BME280_TEMP_OSMPL_1 = 0b001
+BME280_TEMP_OSMPL_2 = 0b010
+BME280_TEMP_OSMPL_4 = 0b011
+BME280_TEMP_OSMPL_8 = 0b100
+BME280_TEMP_OSMPL_16 = 0b101
+
+# Pressure Oversample Modes
+BME280_PRESS_OFF = 0b000
+BME280_PRESS_OSMPL_1 = 0b001
+BME280_PRESS_OSMPL_2 = 0b010
+BME280_PRESS_OSMPL_4 = 0b011
+BME280_PRESS_OSMPL_8 = 0b100
+BME280_PRESS_OSMPL_16 = 0b101
+
+# Register Settings
+BME280_MODE_SLEEP = 0b00
+BME280_MODE_FORCED = 0b01
+BME280_MODE_NORMAL = 0b11
+
+# Inactive Duration (only relevant in normal mode)
+BME280_TSB_0_5MS = 0b000
+BME280_TSB_10MS = 0b110
+BME280_TSB_20MS = 0b111
+BME280_TSB_62_5MS = 0b001
+BME280_TSB_125MS = 0b010
+BME280_TSB_250MS = 0b011
+BME280_TSB_500MS = 0b100
+BME280_TSB_1000MS = 0b101
+
+# IIR Filter Coefficient
+BME280_IIR_OFF = 0b000
+BME280_IIR_COEF2 = 0b001
+BME280_IIR_COEF4 = 0b010
+BME280_IIR_COEF8 = 0b011
+BME280_IIR_COEF16 = 0b100
 
 BME280_REGISTER_CONTROL_HUM = 0xF2
 BME280_REGISTER_CONTROL = 0xF4
-
+BME280_REGISTER_CONFIG = 0xF5
 
 class BME280:
 
     def __init__(
-        self, mode=BME280_OSAMPLE_1, address=BME280_I2CADDR, i2c=None, **kwargs
+        self, 
+        hum_osmpl=BME280_HUM_OSMPL_1,
+        temp_osmpl=BME280_TEMP_OSMPL_1,
+        press_osmpl=BME280_PRESS_OSMPL_16,
+        mode=BME280_MODE_NORMAL,
+        inactive_dur=BME280_TSB_0_5MS,
+        iir=BME280_IIR_COEF16,
+        address=BME280_I2CADDR,
+        i2c=None,
+        **kwargs
     ):
-        # Check that mode is valid.
-        if mode not in [
-            BME280_OSAMPLE_1,
-            BME280_OSAMPLE_2,
-            BME280_OSAMPLE_4,
-            BME280_OSAMPLE_8,
-            BME280_OSAMPLE_16,
-        ]:
-            raise ValueError(
-                "Unexpected mode value {0}. Set mode to one of "
-                "BME280_ULTRALOWPOWER, BME280_STANDARD, BME280_HIGHRES, or "
-                "BME280_ULTRAHIGHRES".format(mode)
-            )
-        self._mode = mode
+        # # Check that mode is valid.
+        # if mode not in [
+        #     BME280_OSAMPLE_1,
+        #     BME280_OSAMPLE_2,
+        #     BME280_OSAMPLE_4,
+        #     BME280_OSAMPLE_8,
+        #     BME280_OSAMPLE_16,
+        # ]:
+        #     raise ValueError(
+        #         "Unexpected mode value {0}. Set mode to one of "
+        #         "BME280_ULTRALOWPOWER, BME280_STANDARD, BME280_HIGHRES, or "
+        #         "BME280_ULTRAHIGHRES".format(mode)
+        #     )
+        self.hum_osmpl=hum_osmpl
+        self.temp_osmpl=temp_osmpl
+        self.press_osmpl=press_osmpl
+        self.mode=mode
+        self.inactive_dur=inactive_dur
+        self.iir=iir
         self.address = address
         if i2c is None:
             raise ValueError("An I2C object is required.")
@@ -76,13 +136,22 @@ class BME280:
 
         self.dig_H6 = unpack_from("<b", dig_e1_e7, 6)[0]
 
-        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL, bytearray([0x3F]))
-        self.t_fine = 0
-
         # temporary data holders which stay allocated
         self._l1_barray = bytearray(1)
         self._l8_barray = bytearray(8)
         self._l3_resultarray = array("i", [0, 0, 0])
+
+        self._l1_barray[0] = self.hum_osmpl
+        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL_HUM, self._l1_barray)
+        self._l1_barray[0] = self.temp_osmpl << 5 | self.press_osmpl << 2 | self.mode
+        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL,  self._l1_barray)
+        self._l1_barray[0] = self.inactive_dur << 5 | self.iir << 2 | 0
+        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONFIG,  self._l1_barray)
+
+        self.t_fine = 0
+
+        time.sleep_ms(100)  # Wait a bit
+        
 
     def read_raw_data(self, result):
         """Reads the raw (uncompensated) data from the sensor.
@@ -93,16 +162,6 @@ class BME280:
         Returns:
             None
         """
-
-        self._l1_barray[0] = self._mode
-        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL_HUM, self._l1_barray)
-        self._l1_barray[0] = self._mode << 5 | self._mode << 2 | 1
-        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL, self._l1_barray)
-
-        sleep_time = 1250 + 2300 * (1 << self._mode)
-        sleep_time = sleep_time + 2300 * (1 << self._mode) + 575
-        sleep_time = sleep_time + 2300 * (1 << self._mode) + 575
-        time.sleep_us(sleep_time)  # Wait the required time
 
         # burst readout from 0xF7 to 0xFE, recommended by datasheet
         self.i2c.readfrom_mem_into(self.address, 0xF7, self._l8_barray)
@@ -212,14 +271,15 @@ class BME280:
 
 def runStandalone():
     i2c = I2C(1, sda=Pin(10), scl=Pin(11), freq=400000)
-
     while True:
-        TICK_RATE_MS = 1000
-        bme = BME280(i2c=i2c, mode=BME280_OSAMPLE_16)
+        TICK_RATE_MS = 500
+        bme = BME280(i2c=i2c)
         print("Temperature: " + str(bme.values[0]))
-        print("Pressure: " + str(bme.values[1]))
+        # print("Pressure: " + str(bme.values[1]))
         print("Humidity: " + str(bme.values[2]))
-
+        print("Altitude: " + str((1-((float(bme.values[1])/1022) ** .190284)) * 145366.45) + "ft above sea level")
+        
         utime.sleep(TICK_RATE_MS / 1000)
 
 # runStandalone()
+

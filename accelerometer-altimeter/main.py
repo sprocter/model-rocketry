@@ -8,7 +8,7 @@ mpu_i2c = I2C(0, scl=Pin(5), sda=Pin(4), freq=400000)
 bme_i2c = I2C(1, sda=Pin(10), scl=Pin(11), freq=400000)
 
 mpu = MPU6050()
-bme = BME280(i2c=bme_i2c, mode=altimeter.BME280_OSAMPLE_16) 
+bme = BME280(i2c=bme_i2c) 
 
 pitch = 0
 roll = 0
@@ -25,7 +25,7 @@ while True:
         
         # From https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf except using current pressure instead of default, which is 1013.25
         print("Altitude: " + str((1-((float(bme.values[1])/CURR_BARO_PRESSURE) ** .190284)) * 145366.45) + "ft above sea level")
-        
+
         print("Humidity: " + str(bme.values[2]))
 
         ###
