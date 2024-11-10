@@ -4,20 +4,20 @@ import utime
 from ustruct import unpack, unpack_from
 from array import array
 
-# lightly adapted from https://how2electronics.com/bme280-raspberry-pi-pico-w-web-server-weather-station/
+# adapted from:
+# * Main control flow, algorithms for getting data and making it readable: https://how2electronics.com/bme280-raspberry-pi-pico-w-web-server-weather-station/ 
+# * Configuration options: 
+#   * https://github.com/adafruit/Adafruit_CircuitPython_BME280/tree/main/adafruit_bme280
+#   * https://cdn-learn.adafruit.com/assets/assets/000/115/588/original/bst-bme280-ds002.pdf?1664822559
 
-# TODO
-# * Add calibration? Or at least track down configuration options to make sure that all makes sense.
 
 # BME280 default address.
 BME280_I2CADDR = 0x76
 
-# # Operating Modes
-# BME280_OSAMPLE_1 = 1
-# BME280_OSAMPLE_2 = 2
-# BME280_OSAMPLE_4 = 3
-# BME280_OSAMPLE_8 = 4
-# BME280_OSAMPLE_16 = 5
+#####################################################
+# Configuration options.                            #
+# See 5.3/5.4 of the BME Data sheet for explanation #
+#####################################################
 
 # Humidity Oversample Modes
 BME280_HUM_OFF = 0b000
@@ -65,6 +65,7 @@ BME280_IIR_COEF4 = 0b010
 BME280_IIR_COEF8 = 0b011
 BME280_IIR_COEF16 = 0b100
 
+# Configuration Register Addresses
 BME280_REGISTER_CONTROL_HUM = 0xF2
 BME280_REGISTER_CONTROL = 0xF4
 BME280_REGISTER_CONFIG = 0xF5
@@ -83,19 +84,6 @@ class BME280:
         i2c=None,
         **kwargs
     ):
-        # # Check that mode is valid.
-        # if mode not in [
-        #     BME280_OSAMPLE_1,
-        #     BME280_OSAMPLE_2,
-        #     BME280_OSAMPLE_4,
-        #     BME280_OSAMPLE_8,
-        #     BME280_OSAMPLE_16,
-        # ]:
-        #     raise ValueError(
-        #         "Unexpected mode value {0}. Set mode to one of "
-        #         "BME280_ULTRALOWPOWER, BME280_STANDARD, BME280_HIGHRES, or "
-        #         "BME280_ULTRAHIGHRES".format(mode)
-        #     )
         self.hum_osmpl=hum_osmpl
         self.temp_osmpl=temp_osmpl
         self.press_osmpl=press_osmpl
@@ -141,6 +129,7 @@ class BME280:
         self._l8_barray = bytearray(8)
         self._l3_resultarray = array("i", [0, 0, 0])
 
+        # Write our configuration options
         self._l1_barray[0] = self.hum_osmpl
         self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL_HUM, self._l1_barray)
         self._l1_barray[0] = self.temp_osmpl << 5 | self.press_osmpl << 2 | self.mode
@@ -269,17 +258,19 @@ class BME280:
             "{}.{:02d} %".format(hi, hd),
         )
 
-def runStandalone():
+def _Run_Standalone():
+    """Used to test the altimeter directly, not API.
+    """
     i2c = I2C(1, sda=Pin(10), scl=Pin(11), freq=400000)
     while True:
         TICK_RATE_MS = 500
         bme = BME280(i2c=i2c)
         print("Temperature: " + str(bme.values[0]))
-        # print("Pressure: " + str(bme.values[1]))
+        print("Pressure: " + str(bme.values[1]))
         print("Humidity: " + str(bme.values[2]))
         print("Altitude: " + str((1-((float(bme.values[1])/1022) ** .190284)) * 145366.45) + "ft above sea level")
         
         utime.sleep(TICK_RATE_MS / 1000)
 
-# runStandalone()
+# _Run_Standalone()
 

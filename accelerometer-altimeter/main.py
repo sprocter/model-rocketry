@@ -15,12 +15,12 @@ roll = 0
 prev_time = utime.ticks_ms()
 
 while True:
-        TICK_RATE_MS = 1000
-        CURR_BARO_PRESSURE = 1025
+        TICK_RATE_MS = 5000
+        CURR_BARO_PRESSURE = 1019
         ###
         # ALTIMETER READING AND PRINTING
         ###
-        print("Temperature: " + str(bme.values[0]))
+        print("(Altimeter) Temperature: " + str(bme.values[0]))
         print("Pressure: " + str(bme.values[1]) + " hPa")
         
         # From https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf except using current pressure instead of default, which is 1013.25
@@ -40,7 +40,7 @@ while True:
 
         prev_time = curr_time
 
-        print("Temperature: {:.2f} *C".format(data["temp"]))
+        print("(Accelerometer) Temperature: {:.2f} *C".format(data["temp"]))
         print(
             "Tilt angles: X: {:.2f}, Y: {:.2f}, Z: {:.2f} degrees".format(
                 tilt_x, tilt_y, tilt_z

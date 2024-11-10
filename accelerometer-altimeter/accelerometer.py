@@ -103,7 +103,9 @@ class MPU6050:
 
         return pitch, roll
 
-def runStandalone():
+def _Run_Standalone():
+    """Used to test the accelerometer directly, not API.
+    """
 
     i2c = I2C(0, scl=Pin(5), sda=Pin(4), freq=400000)
 
@@ -144,4 +146,4 @@ def runStandalone():
         )
         utime.sleep(TICK_RATE_MS / 1000)
 
-# runStandalone()
+# _Run_Standalone()
