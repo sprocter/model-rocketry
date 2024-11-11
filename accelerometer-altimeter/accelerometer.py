@@ -8,6 +8,7 @@ import math
 # TODO:
 # * Implement calibration, see guide: https://shillehtek.com/blogs/news/how-to-calibrate-mpu6050
 # * Tweak configuration from defaults (and honestly use like constants or something) see implementation in https://github.com/shillehbean/youtube-channel/blob/main/imu.py and full description in MPU-6000/MPU-6050 Register Map and Descriptions
+#   * try maybe using https://github.com/OneMadGypsy/upy-motion ?
 
 PWR_MGMT_1 = 0x6B
 SMPLRT_DIV = 0x19
@@ -21,12 +22,12 @@ GYRO_XOUT_H = 0x43
 class MPU6050:
 
     def init_mpu6050(self, i2c, address=0x68):
-        i2c.writeto_mem(address, PWR_MGMT_1, b"\x00")
+        i2c.writeto_mem(address, PWR_MGMT_1, b"\x00") # Ok, I think. This has the device use its internal 8MHz oscillator for it's clock (and doesn't touch sleep / lower-power cycling options). Register map pages 40-41
         utime.sleep_ms(100)
-        i2c.writeto_mem(address, SMPLRT_DIV, b"\x07")
-        i2c.writeto_mem(address, CONFIG, b"\x00")
-        i2c.writeto_mem(address, GYRO_CONFIG, b"\x00")
-        i2c.writeto_mem(address, ACCEL_CONFIG, b"\x00")
+        i2c.writeto_mem(address, SMPLRT_DIV, b"\x07") # Read more about this, it seems like we don't need the digital motion processor, but maybe we could read more / cache it to FIFO buffer? but that will take more configuration. Register map pgs 11-12, datasheet page 25 (and 30, for a blurb about FIFO queuing)
+        i2c.writeto_mem(address, CONFIG, b"\x00") # OK! This sets the accel and gyro to highest bandwidth / lowest delay. Page 13
+        i2c.writeto_mem(address, GYRO_CONFIG, b"\x00") # Check this, it sets the gyro to 250*/s which may not be enough?
+        i2c.writeto_mem(address, ACCEL_CONFIG, b"\x00") # Probably wrong, this sets the accel to +/- 2g, which is the lowest. Should be 0b11 = 3? That'd be +/- 16g.
 
 
     def read_raw_data(self, i2c, addr, address=0x68):

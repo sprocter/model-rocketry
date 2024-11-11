@@ -4,6 +4,8 @@ from altimeter import BME280
 import altimeter
 import utime
 
+# TODO: Look into SD Cards, see https://electrocredible.com/raspberry-pi-pico-micro-sd-card-module-micropython/ 
+
 mpu_i2c = I2C(0, scl=Pin(5), sda=Pin(4), freq=400000)
 bme_i2c = I2C(1, sda=Pin(10), scl=Pin(11), freq=400000)
 
