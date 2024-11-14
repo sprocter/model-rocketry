@@ -50,7 +50,7 @@ CLK_KEEP_RESET  = const(0x07)
 
    
 # Data Structure
-_D   = namedtuple('D', ('acc_x', 'acc_y', 'acc_z', 'gyro_x', 'gyro_y', 'gyro_z'))
+_D   = namedtuple('D', ('acc_x', 'acc_y', 'acc_z', 'gyro_x', 'gyro_y', 'gyro_z', 'raw_bytes'))
 _A   = namedtuple('A', ('roll', 'pitch'))
 
 # Data Formatting
@@ -181,15 +181,16 @@ class MPU6050(__I2CHelper):
         return self.__readBits(0x75, 0x6, 0x6)
 
     @property
-    def raw_data(self) -> tuple:
-        return struct.unpack(">hhhhhhh", self.__readBytes(0x3b, 14))
+    def raw_data(self) -> bytes:
+        return bytes(self.__readBytes(0x3b, 14))
 
     @property
     def data(self) -> namedtuple:
         data = None
         ax, ay, az, gx, gy, gz = 0, 0, 0, 0, 0, 0
         if self.__usefifo:
-            data = self.__get_fifo_packet(12)
+            bytez = self.__get_fifo_packet(12) 
+            data = bytez
             if not data is None:
                 ax = data[0] / self.__accfact
                 ay = data[1] / self.__accfact
@@ -199,7 +200,8 @@ class MPU6050(__I2CHelper):
                 gz = data[5] / self.__gyrofact 
             
         if (not self.__usefifo) or (data is None):
-            data = struct.unpack(">hhhhhhh", self.__readBytes(0x3b, 14))
+            bytez = self.__readBytes(0x3b, 14)
+            data = struct.unpack(">hhhhhhh", bytez)
             ax = data[0] / self.__accfact 
             ay = data[1] / self.__accfact 
             az = data[2] / self.__accfact 
@@ -218,14 +220,14 @@ class MPU6050(__I2CHelper):
                ay = self.__fil_ay.kalman(ay)
                az = self.__fil_az.kalman(az)
             
-        return _D(ax, ay, az, gx, gy, gz)
+        return _D(ax, ay, az, gx, gy, gz, bytez)
             
     @property
     def angles(self) -> tuple:
         if (self.__aftype & ANGLE_BOTH) and (self.__filtered & FILTER_ANGLES):
             return self.__filtered_angles()
             
-        ax, ay, az, gx, gy, gz = self.data
+        ax, ay, az, gx, gy, gz, b = self.data
         z2    = az**2
         roll  = math.atan(ax/math.sqrt(ay**2+z2))*_R2D
         pitch = math.atan(ay/math.sqrt(ax**2+z2))*_R2D

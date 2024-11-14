@@ -140,7 +140,21 @@ class BME280:
         self.t_fine = 0
 
         time.sleep_ms(100)  # Wait a bit
-        
+
+    @property
+    def calibration_data(self):
+        # load calibration data
+        p1 = bytearray(26)
+        p2 = bytearray(7)
+        self.i2c.readfrom_mem_into(self.address, 0x88, p1)
+        self.i2c.readfrom_mem_into(self.address, 0xE1, p2)
+        return p1 + p2
+
+    @property
+    def rawer_data(self):
+        # burst readout from 0xF7 to 0xFE, recommended by datasheet
+        self.i2c.readfrom_mem_into(self.address, 0xF7, self._l8_barray)
+        return self._l8_barray
 
     def read_raw_data(self, result):
         """Reads the raw (uncompensated) data from the sensor.
@@ -256,6 +270,7 @@ class BME280:
             #"{}.{:02d} hPa".format(pi, pd),
             "{}.{:02d}".format(pi, pd),
             "{}.{:02d} %".format(hi, hd),
+            self._l8_barray.hex()
         )
 
 def _Run_Standalone():
