@@ -1,14 +1,16 @@
 from collections import namedtuple
 from struct import unpack, unpack_from
 from math import atan, sqrt, pi
+from io import open
+from os import chdir, scandir, listdir, DirEntry
+from itertools import batched
 
 # TODO: import filters from accelerometer
 
-# accfact = 0
-# gyrofact = 0
-
 D = namedtuple('D', ('acc_x', 'acc_y', 'acc_z', 'temp_f', 'gyro_x', 'gyro_y', 'gyro_z'))
 A   = namedtuple('A', ('roll', 'pitch'))
+
+CURR_BARO_PRESSURE = 1006
 
 def set_globals(alti_calib : bytes):
     global accfact, gyrofact
@@ -59,7 +61,8 @@ def decode_accel_data(accel_reading : bytearray):
     roll  = atan(ax/sqrt(ay**2+z2))*R2D
     pitch = atan(ay/sqrt(ax**2+z2))*R2D
 
-    return (D(ax, ay, az, temp_f, gx, gy, gz), A(roll, pitch))
+    # return (D(ax, ay, az, temp_f, gx, gy, gz), A(roll, pitch))
+    return (ax, ay, az, temp_f, gx, gy, gz, roll, pitch)
 
 def _get_raw_alti_data(readout : bytearray):
     # pressure(0xF7): ((msb << 16) | (lsb << 8) | xlsb) >> 4
@@ -126,6 +129,7 @@ def _get_compensated_alti_data(alti_reading : bytearray):
 
 def get_alti_values(alti_reading : bytearray):
     """human readable values"""
+    global CURR_BARO_PRESSURE
 
     t, p, h = _get_compensated_alti_data(alti_reading)
 
@@ -136,57 +140,46 @@ def get_alti_values(alti_reading : bytearray):
     hi = h // 1024
     hd = h * 100 // 1024 - hi * 100
     return (
-        "{}*C".format(t / 100),
+        str((t / 100) * 1.8 + 32),
         #"{}.{:02d} hPa".format(pi, pd),
-        "{}.{:02d}".format(pi, pd),
-        "{}.{:02d} %".format(hi, hd)
+        #"{}.{:02d}".format(pi, pd),
+        str((1-((float(p/100)/CURR_BARO_PRESSURE) ** .190284)) * 145366.45),
+        # "{}.{:02d}".format(hi, hd)
+        str(h/1024)
     )
 
 set_globals(bytes.fromhex("0a6ea6673200928e71d6d00b7f1deefff9ffb42de8d18813004b6d01001329031e"))
 
-#print(decode_accel_data(bytearray.fromhex("f95701d00b3fec4dfffa220e09a3")))
-print(decode_accel_data(bytearray.fromhex("ffd1ffd707ecea4bfffd0002ffd5")))
-# print(decode_accel_data(bytearray.fromhex("f2cd060005eeec370cabcac6f8b8")))
-# print(decode_accel_data(bytearray.fromhex("fed2fec801c8ec39f6d7e4bb12d5")))
-# print(get_alti_values(bytearray.fromhex("5453507e1b606c19")))
-# print(get_alti_values(bytearray.fromhex("5453807e19a06c1f")))
-# print(get_alti_values(bytearray.fromhex("5453407e1a606c0f")))
-
-# Pitch: -30.30, Roll: 7.46 degrees
-# (Accelerometer) Temperature: 71.06 *F
-# Acceleration: X: -0.83, Y: 0.23, Z: 1.41 g
-# Gyroscope: X: -0.18, Y: 265.79, Z: 75.21 */s
-# Raw bytes: f95701d00b3fec4dfffa220e09a3
-# ===========================
-# Pitch: -56.69, Roll: 22.65 degrees
-# (Accelerometer) Temperature: 71.02 *F
-# Acceleration: X: -1.65, Y: 0.75, Z: 0.74 g
-# Gyroscope: X: 98.87, Y: -415.43, Z: -56.83 */s
-# Raw bytes: f2cd060005eeec370cabcac6f8b8
-# ===========================
-# Pitch: -21.67, Roll: -31.43 degrees
-# (Accelerometer) Temperature: 70.95 *F
-# Acceleration: X: -0.15, Y: -0.15, Z: 0.22 g
-# Gyroscope: X: -71.49, Y: -212.84, Z: 146.98 */s
-# Raw bytes: fed2fec801c8ec39f6d7e4bb12d5
-# ===========================
-
-# 0a6ea6673200928e71d6d00b7f1deefff9ffb42de8d18813004b6d01001329031e
-# (Altimeter) Temperature: 19.31*C
-# Pressure: 987.89 hPa
-# Altitude: 638.2195ft above sea level
-# Humidity: 41.67 %
-# Raw bytes: 5444f07e21f06bf9
-# ===========================
-# (Altimeter) Temperature: 19.32*C
-# Pressure: 987.86 hPa
-# Altitude: 639.06ft above sea level
-# Humidity: 41.68 %
-# Raw bytes: 5446707e22c06ba4
-# ===========================
-# (Altimeter) Temperature: 19.32*C
-# Pressure: 987.84 hPa
-# Altitude: 639.6146ft above sea level
-# Humidity: 41.98 %
-# Raw bytes: 5447707e23d06bda
-# ===========================
+accel_data = list() 
+alti_data = list()
+chdir('data')
+for launch in scandir():
+    if DirEntry.is_file(launch):
+        continue
+    chdir(launch)
+    #TODO: Test with multidigit files, ie alti12.bin
+    for file in sorted(listdir()): 
+        if file.startswith('accel'):
+            with open(file, 'rb') as f:
+                while(bytes := f.read(14)):
+                    accel_data.append(bytes)
+        if file.startswith('alti'):
+            with open(file, 'rb') as f:
+                while(bytes := f.read(8)):
+                    alti_data.append(bytes)
+    chdir('..')
+    i = 0
+    with open('launch'+launch.name+'.csv', 'wt') as f:
+        f.write("acc_x, acc_y, acc_z, acc_temp_f, gyro_x, gyro_y, gyro_z, roll, pitch, alti_temp_f, alti_ft, humid_pct\n")
+        for chunk in batched(accel_data, 5):
+            if(len(chunk) < 5):
+                break
+            f.write(','.join(str(x) for x in decode_accel_data(chunk[0])) + ",")
+            f.write(','.join(str(x) for x in get_alti_values(alti_data[i])) + "\n")
+            f.write(','.join(str(x) for x in decode_accel_data(chunk[1])) + "\n")
+            f.write(','.join(str(x) for x in decode_accel_data(chunk[2])) + "\n")
+            f.write(','.join(str(x) for x in decode_accel_data(chunk[3])) + "\n")
+            f.write(','.join(str(x) for x in decode_accel_data(chunk[4])) + "\n")
+            i += 1
+    accel_data.clear()
+    alti_data.clear()
