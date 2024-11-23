@@ -144,9 +144,10 @@ def get_alti_values(alti_reading : bytearray):
 
 set_globals(bytes.fromhex("0a6ea6673200928e71d6d00b7f1deefff9ffb42de8d18813004b6d01001329031e"))
 
-print(decode_accel_data(bytearray.fromhex("f95701d00b3fec4dfffa220e09a3")))
-print(decode_accel_data(bytearray.fromhex("f2cd060005eeec370cabcac6f8b8")))
-print(decode_accel_data(bytearray.fromhex("fed2fec801c8ec39f6d7e4bb12d5")))
+#print(decode_accel_data(bytearray.fromhex("f95701d00b3fec4dfffa220e09a3")))
+print(decode_accel_data(bytearray.fromhex("ffd1ffd707ecea4bfffd0002ffd5")))
+# print(decode_accel_data(bytearray.fromhex("f2cd060005eeec370cabcac6f8b8")))
+# print(decode_accel_data(bytearray.fromhex("fed2fec801c8ec39f6d7e4bb12d5")))
 # print(get_alti_values(bytearray.fromhex("5453507e1b606c19")))
 # print(get_alti_values(bytearray.fromhex("5453807e19a06c1f")))
 # print(get_alti_values(bytearray.fromhex("5453407e1a606c0f")))
