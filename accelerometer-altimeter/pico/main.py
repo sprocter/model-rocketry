@@ -1,59 +1,79 @@
-from machine import Pin, I2C
+from machine import Pin, I2C, Signal
 from accelerometer import MPU6050, GYRO_FS_1000, ACCEL_FS_16
 from altimeter import BME280
 import utime
 import time
+import os
 from io import open
 import _thread
 import machine
 
-# TODO: 
-# * Maybe? Move file-writing into the main loop, but shove it onto a second thread
-# * Copy files to PC with https://docs.micropython.org/en/latest/reference/mpremote.html#examples
-# * Maybe? Look into SD Cards, see https://electrocredible.com/raspberry-pi-pico-micro-sd-card-module-micropython/ 
-#   * Looks like we only have a smidge over 9 minutes of data if we fill the pico (9040) with 100 accelerometer readings per second + 20 altimeter readings per second.
+############################
+# Initialization / Startup #
+############################
 
+# Slow things down for lower power consumption, see neat chart on
+# page 1341 of the RP2350 datasheet
+machine.freq(48000000)
+
+# Something like, can't test this yet...
+# red_led = Signal(Pin(18, Pin.OUT), invert=True)
+# grn_led = Signal(Pin(19, Pin.OUT), invert=True)
+# blu_led = Signal(Pin(20, Pin.OUT), invert=True)
+# red_led = Signal(Pin(20, Pin.OUT))
+# grn_led = Signal(Pin(19, Pin.OUT))
+# blu_led = Signal(Pin(18, Pin.OUT))
+
+# Red LED indicates the system is still initializing...
+# red_led.on()
+
+# Set global constants
+TICK_RATE_MS = 10
+RESET_DATA = True
+
+os.chdir("/data")
+if RESET_DATA:
+    for dir in os.listdir():
+        os.chdir(dir)
+        for file in os.listdir():
+            os.remove(file)
+        os.chdir("/data")
+        os.rmdir(dir)
+    os.mkdir("1")
+    os.chdir("1")
+else:
+    new_dir = str(int(sorted([int(i) for i in os.listdir()]).pop()) + 1)
+    os.mkdir(new_dir)
+    os.chdir(new_dir)
+
+# Initialize sensors
 mpu = MPU6050(bus=0, sda=Pin(4), scl=Pin(5), ofs=(638, -3813, 866, 53, 17, 3), gyro=GYRO_FS_1000, accel=ACCEL_FS_16, rate=1)
 bme = BME280(i2c=I2C(1, sda=Pin(10), scl=Pin(11), freq=400000))
 
-# print("AccFact: " + str(mpu.__accfact) + ", GyroFact: " + str(mpu.__gyrofact))
-
-# pitch = 0
-# roll = 0
-machine.freq(48000000)
-# prev_time = utime.ticks_ms()
-TICK_RATE_MS = 10
-
-# create a global lock
-# lock = _thread.allocate_lock()
-
 def write_files_thd(accel_data, alti_data, seq_num):
-    # global lock
-    # lock.acquire()
+    # blu_led.on()
     str_seq_num = str(seq_num)
     print("len(accel_data) = " + str(len(accel_data)))
     print("len(alti_data) = " + str(len(alti_data)))
     start_time = time.ticks_ms()
-    with open('/data/accel' + str_seq_num + '.bin', 'wb') as f:
+    with open('accel' + str_seq_num + '.bin', 'wb') as f:
         f.write(accel_data)
-    with open('/data/alti' + str_seq_num + '.bin', 'wb') as f:
+    with open('alti' + str_seq_num + '.bin', 'wb') as f:
         f.write(alti_data)
     end_time = time.ticks_ms()
     print(time.ticks_diff(end_time, start_time))
-    # lock.release()
+    # blu_led.off()
     return
 
-# print(str(bme.rawer_data.hex())) # 8 bytes
-# print(str(mpu.raw_data.hex())) # 14 bytes
-# print(str(bme.calibration_data.hex()))
-
 def main_portion():
-    global lock
     accel_data = bytearray()
     alti_data = bytearray()
-    tick = -1
+    tick = 0
     seq_num = 0
-    # start_time = time.ticks_ms()
+
+    # red_led.off()
+    # grn_led.on()
+
     while tick <= 3000:
         tick = tick + 1
         
@@ -95,19 +115,21 @@ def main_portion():
         accel_data += mpu.raw_data
         if tick % 5 == 0:
             alti_data += bme.rawer_data
-        if tick % 1000 == 0 and tick != 0:
+        if tick % 1000 == 0:
             seq_num = seq_num + 1
             _thread.start_new_thread(write_files_thd, (accel_data, alti_data, seq_num))
-            accel_data = bytearray()
-            alti_data = bytearray()
     
         utime.sleep_ms(TICK_RATE_MS)
+        
+        if tick % 1000 == 0:
+            # wait until after sleep to (hopefully) avoid race 
+            accel_data = bytearray()
+            alti_data = bytearray()
 
 main_portion()
 
-# end_time = time.ticks_ms()
 utime.sleep_ms(500) # give files time to finish writing
-# lock.acquire() # avoid shutting down if the files are writing
+# grn_led.off()
 print("Done!")
 
 
