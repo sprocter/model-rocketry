@@ -14,22 +14,22 @@ import machine
 
 # Slow things down for lower power consumption, see neat chart on
 # page 1341 of the RP2350 datasheet
-machine.freq(48000000)
+machine.freq(25000000)
 
 # Something like, can't test this yet...
 # red_led = Signal(Pin(18, Pin.OUT), invert=True)
 # grn_led = Signal(Pin(19, Pin.OUT), invert=True)
 # blu_led = Signal(Pin(20, Pin.OUT), invert=True)
-# red_led = Signal(Pin(20, Pin.OUT))
-# grn_led = Signal(Pin(19, Pin.OUT))
-# blu_led = Signal(Pin(18, Pin.OUT))
+red_led = Signal(Pin(20, Pin.OUT))
+grn_led = Signal(Pin(19, Pin.OUT))
+blu_led = Signal(Pin(18, Pin.OUT))
 
 # Red LED indicates the system is still initializing...
-# red_led.on()
+red_led.on()
 
 # Set global constants
 TICK_RATE_MS = 10
-RESET_DATA = True
+RESET_DATA = False
 
 os.chdir("/data")
 if RESET_DATA:
@@ -51,7 +51,7 @@ mpu = MPU6050(bus=0, sda=Pin(4), scl=Pin(5), ofs=(638, -3813, 866, 53, 17, 3), g
 bme = BME280(i2c=I2C(1, sda=Pin(10), scl=Pin(11), freq=400000))
 
 def write_files_thd(accel_data, alti_data, seq_num):
-    # blu_led.on()
+    blu_led.on()
     str_seq_num = str(seq_num)
     print("len(accel_data) = " + str(len(accel_data)))
     print("len(alti_data) = " + str(len(alti_data)))
@@ -62,7 +62,7 @@ def write_files_thd(accel_data, alti_data, seq_num):
         f.write(alti_data)
     end_time = time.ticks_ms()
     print(time.ticks_diff(end_time, start_time))
-    # blu_led.off()
+    blu_led.off()
     return
 
 def main_portion():
@@ -71,8 +71,8 @@ def main_portion():
     tick = 0
     seq_num = 0
 
-    # red_led.off()
-    # grn_led.on()
+    red_led.off()
+    grn_led.on()
 
     while tick <= 3000:
         tick = tick + 1
@@ -129,7 +129,7 @@ def main_portion():
 main_portion()
 
 utime.sleep_ms(500) # give files time to finish writing
-# grn_led.off()
+grn_led.off()
 print("Done!")
 
 
