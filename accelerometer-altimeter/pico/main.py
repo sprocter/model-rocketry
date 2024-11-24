@@ -7,6 +7,10 @@ import os
 from io import open
 import _thread
 import machine
+from micropython import const
+
+# TODO: Spend some time on https://docs.micropython.org/en/latest/reference/speed_python.html#micropython-code-improvements -- probably ways to improve this code a bit
+#   * Should also profile / work on main loop speed / power consumption. Memoryviews instead of bytearrays? Indexing instead of appending?
 
 ############################
 # Initialization / Startup #
@@ -17,22 +21,26 @@ import machine
 machine.freq(25000000)
 
 # Something like, can't test this yet...
-# red_led = Signal(Pin(18, Pin.OUT), invert=True)
-# grn_led = Signal(Pin(19, Pin.OUT), invert=True)
-# blu_led = Signal(Pin(20, Pin.OUT), invert=True)
+# red_led = Signal(Pin(18, Pin.OUT), invert = True)
+# grn_led = Signal(Pin(19, Pin.OUT), invert = True)
+# blu_led = Signal(Pin(20, Pin.OUT), invert = True)
 red_led = Signal(Pin(20, Pin.OUT))
 grn_led = Signal(Pin(19, Pin.OUT))
 blu_led = Signal(Pin(18, Pin.OUT))
+
+# shutdown_button = Signal(Pin(23, Pin.IN), invert = True)
+shutdown_button = Signal(Pin(21, Pin.IN))
 
 # Red LED indicates the system is still initializing...
 red_led.on()
 
 # Set global constants
-TICK_RATE_MS = 10
-RESET_DATA = False
+_TICK_RATE_MS = const(10)
+_DURATION_TICKS = const(3000)
+_RESET_DATA = const(False)
 
 os.chdir("/data")
-if RESET_DATA:
+if _RESET_DATA:
     for dir in os.listdir():
         os.chdir(dir)
         for file in os.listdir():
@@ -60,6 +68,7 @@ def write_files_thd(accel_data, alti_data, seq_num):
         f.write(accel_data)
     with open('alti' + str_seq_num + '.bin', 'wb') as f:
         f.write(alti_data)
+    os.sync()
     end_time = time.ticks_ms()
     print(time.ticks_diff(end_time, start_time))
     blu_led.off()
@@ -74,7 +83,7 @@ def main_portion():
     red_led.off()
     grn_led.on()
 
-    while tick <= 3000:
+    while tick <= _DURATION_TICKS:
         tick = tick + 1
         
         # CURR_BARO_PRESSURE = 1024
@@ -112,24 +121,32 @@ def main_portion():
         # print("===========================")
         """
 
+        if shutdown_button.value() == 1:
+            # User requests that we wrap it up, so we write whatever we have to disk and bail out.
+            print("Got shutdown command, saving state and then quitting...")
+            _thread.start_new_thread(write_files_thd, (accel_data, alti_data, seq_num))
+            return
+
+        tick_mod_five = tick % 5
+        tick_mod_thou = tick % 1000
+
         accel_data += mpu.raw_data
-        if tick % 5 == 0:
+        if tick_mod_five == 0:
             alti_data += bme.rawer_data
-        if tick % 1000 == 0:
+        if tick_mod_thou == 0:
             seq_num = seq_num + 1
             _thread.start_new_thread(write_files_thd, (accel_data, alti_data, seq_num))
     
-        utime.sleep_ms(TICK_RATE_MS)
+        utime.sleep_ms(_TICK_RATE_MS)
         
-        if tick % 1000 == 0:
+        if tick_mod_thou == 0:
             # wait until after sleep to (hopefully) avoid race 
             accel_data = bytearray()
             alti_data = bytearray()
 
 main_portion()
-
-utime.sleep_ms(500) # give files time to finish writing
 grn_led.off()
+utime.sleep_ms(500) # give files time to finish writing
 print("Done!")
 
 
