@@ -8,9 +8,12 @@ from io import open
 import _thread
 import machine
 from micropython import const
+import micropython
 
 # TODO: Spend some time on https://docs.micropython.org/en/latest/reference/speed_python.html#micropython-code-improvements -- probably ways to improve this code a bit
 #   * Should also profile / work on main loop speed / power consumption. Memoryviews instead of bytearrays? Indexing instead of appending?
+#   * Starting point: 155040 instructions for 40 (alti samples every 5, saves every 20) , 2.5k-2.6k ticks per main loop and 100 (skip) to 500 (hit) for the new array stuff
+#   * Ending point: 143516, so a... 8% improvement?
 
 ############################
 # Initialization / Startup #
@@ -36,8 +39,17 @@ red_led.on()
 
 # Set global constants
 _TICK_RATE_MS = const(10)
+_TICKS_PER_ALTI = const(5)
+_TICKS_PER_SAVE = const(1000)
+_ACCEL_BYTES_PER_READ = const(14)
+_ACCEL_BYTES_PER_SAVE = const(_TICKS_PER_SAVE * _ACCEL_BYTES_PER_READ)
+_ALTI_BYTES_PER_READ = const(8)
+_ALTI_BYTES_PER_SAVE = const(200 * _ALTI_BYTES_PER_READ) # (_TICKS_PER_SAVE / _TICKS_PER_ALTI * _ALTI_BYTES_PER_READ)
+_ACCEL_BARRAY_SIZE = const(_ACCEL_BYTES_PER_SAVE * 2)
+_ALTI_BARRAY_SIZE = const(_ALTI_BYTES_PER_SAVE * 2)
 _DURATION_TICKS = const(3000)
 _RESET_DATA = const(False)
+total_ticks = 0
 
 os.chdir("/data")
 if _RESET_DATA:
@@ -58,7 +70,7 @@ else:
 mpu = MPU6050(bus=0, sda=Pin(4), scl=Pin(5), ofs=(638, -3813, 866, 53, 17, 3), gyro=GYRO_FS_1000, accel=ACCEL_FS_16, rate=1)
 bme = BME280(i2c=I2C(1, sda=Pin(10), scl=Pin(11), freq=400000))
 
-def write_files_thd(accel_data, alti_data, seq_num):
+def write_files_thd(accel_data : memoryview, alti_data : memoryview, seq_num : int) -> None:
     blu_led.on()
     str_seq_num = str(seq_num)
     print("len(accel_data) = " + str(len(accel_data)))
@@ -74,17 +86,25 @@ def write_files_thd(accel_data, alti_data, seq_num):
     blu_led.off()
     return
 
-def main_portion():
-    accel_data = bytearray()
-    alti_data = bytearray()
-    tick = 0
+@micropython.native
+def main_portion() -> int:
+    total_ticks = 0
+    accel_data = bytearray(_ACCEL_BARRAY_SIZE)
+    alti_data = bytearray(_ALTI_BARRAY_SIZE)
+    mv_accel_data = memoryview(accel_data)
+    mv_alti_data = memoryview(alti_data)
+    tick = -1
     seq_num = 0
+    accel_index_nxt = 0
+    alti_index_nxt = 0
 
     red_led.off()
     grn_led.on()
 
     while tick <= _DURATION_TICKS:
-        tick = tick + 1
+        main_loop_start = time.ticks_cpu()
+        tick += 1
+        
         
         # CURR_BARO_PRESSURE = 1024
         
@@ -124,29 +144,42 @@ def main_portion():
         if shutdown_button.value() == 1:
             # User requests that we wrap it up, so we write whatever we have to disk and bail out.
             print("Got shutdown command, saving state and then quitting...")
-            _thread.start_new_thread(write_files_thd, (accel_data, alti_data, seq_num))
-            return
+            seq_num += 1
+            if seq_num & 1:
+                _thread.start_new_thread(write_files_thd, (mv_accel_data[:_ACCEL_BYTES_PER_SAVE], mv_alti_data[:_ALTI_BYTES_PER_SAVE], seq_num))
+            else:
+                _thread.start_new_thread(write_files_thd, (mv_accel_data[_ACCEL_BYTES_PER_SAVE:], mv_alti_data[_ALTI_BYTES_PER_SAVE:], seq_num)) 
+            return total_ticks
 
-        tick_mod_five = tick % 5
-        tick_mod_thou = tick % 1000
-
-        accel_data += mpu.raw_data
-        if tick_mod_five == 0:
-            alti_data += bme.rawer_data
-        if tick_mod_thou == 0:
-            seq_num = seq_num + 1
-            _thread.start_new_thread(write_files_thd, (accel_data, alti_data, seq_num))
-    
+        accel_index = accel_index_nxt % _ACCEL_BARRAY_SIZE
+        accel_index_nxt = (accel_index + _ACCEL_BYTES_PER_READ) 
+        mv_accel_data[accel_index : accel_index_nxt] = mpu.raw_data
+        tick_mod_alti = tick % _TICKS_PER_ALTI
+        if tick_mod_alti == 0:
+            alti_index = alti_index_nxt % _ALTI_BARRAY_SIZE
+            alti_index_nxt = (alti_index + _ALTI_BYTES_PER_READ) 
+            mv_alti_data[alti_index : alti_index + _ALTI_BYTES_PER_READ] = bme.rawer_data
+            tick_mod_save = tick % _TICKS_PER_SAVE
+            if tick_mod_save == 0 and tick > 0:
+                seq_num += 1
+                if seq_num & 1:
+                    _thread.start_new_thread(write_files_thd, (mv_accel_data[:_ACCEL_BYTES_PER_SAVE], mv_alti_data[:_ALTI_BYTES_PER_SAVE], seq_num))
+                else:
+                    _thread.start_new_thread(write_files_thd, (mv_accel_data[_ACCEL_BYTES_PER_SAVE:], mv_alti_data[_ALTI_BYTES_PER_SAVE:], seq_num)) 
+        
+        main_loop_end = time.ticks_cpu()
+        main_loop_ticks = time.ticks_diff(main_loop_end, main_loop_start)
+        total_ticks += main_loop_ticks
+        # print("This iteration took " + str(main_loop_ticks) + " ticks")
+        
         utime.sleep_ms(_TICK_RATE_MS)
         
-        if tick_mod_thou == 0:
-            # wait until after sleep to (hopefully) avoid race 
-            accel_data = bytearray()
-            alti_data = bytearray()
+    return total_ticks
 
-main_portion()
+total_ticks = main_portion()
 grn_led.off()
 utime.sleep_ms(500) # give files time to finish writing
+print("Total ticks in main loop: " + str(total_ticks))
 print("Done!")
 
 
