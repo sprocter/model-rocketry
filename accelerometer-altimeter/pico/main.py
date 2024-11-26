@@ -10,20 +10,15 @@ import machine
 from micropython import const
 import micropython
 
-# TODO: Spend some time on https://docs.micropython.org/en/latest/reference/speed_python.html#micropython-code-improvements -- probably ways to improve this code a bit
-#   * Should also profile / work on main loop speed / power consumption. Memoryviews instead of bytearrays? Indexing instead of appending?
-#   * Starting point: 155040 instructions for 40 (alti samples every 5, saves every 20) , 2.5k-2.6k ticks per main loop and 100 (skip) to 500 (hit) for the new array stuff
-#   * Ending point: 143516, so a... 8% improvement?
-
 ############################
 # Initialization / Startup #
 ############################
 
 # Slow things down for lower power consumption, see neat chart on
 # page 1341 of the RP2350 datasheet
-machine.freq(25000000)
+machine.freq(65000000)
 
-# Something like, can't test this yet...
+# Set up status LEDs
 # red_led = Signal(Pin(18, Pin.OUT), invert = True)
 # grn_led = Signal(Pin(19, Pin.OUT), invert = True)
 # blu_led = Signal(Pin(20, Pin.OUT), invert = True)
@@ -31,28 +26,35 @@ red_led = Signal(Pin(20, Pin.OUT))
 grn_led = Signal(Pin(19, Pin.OUT))
 blu_led = Signal(Pin(18, Pin.OUT))
 
+# Set up save / shutdown button
 # shutdown_button = Signal(Pin(23, Pin.IN), invert = True)
 shutdown_button = Signal(Pin(21, Pin.IN))
 
-# Red LED indicates the system is still initializing...
+# Red LED indicates the system is initializing...
 red_led.on()
 
-# Set global constants
-_TICK_RATE_MS = const(10)
-_TICKS_PER_ALTI = const(5)
-_TICKS_PER_SAVE = const(1000)
-_ACCEL_BYTES_PER_READ = const(14)
+# Set constants
+_TICK_RATE_MS = const(10) # How often to take a gyro/accel reading
+_TICKS_PER_ALTI = const(5) # How often (in ticks) to take an alti reading
+_TICKS_PER_SAVE = const(1000) # How often (in ticks) to save to flash
+_ACCEL_BYTES_PER_READ = const(14) # Bytes for a full read of the accel
 _ACCEL_BYTES_PER_SAVE = const(_TICKS_PER_SAVE * _ACCEL_BYTES_PER_READ)
-_ALTI_BYTES_PER_READ = const(8)
-_ALTI_BYTES_PER_SAVE = const(200 * _ALTI_BYTES_PER_READ) # (_TICKS_PER_SAVE / _TICKS_PER_ALTI * _ALTI_BYTES_PER_READ)
-_ACCEL_BARRAY_SIZE = const(_ACCEL_BYTES_PER_SAVE * 2)
-_ALTI_BARRAY_SIZE = const(_ALTI_BYTES_PER_SAVE * 2)
-_DURATION_TICKS = const(3000)
-_RESET_DATA = const(False)
-total_ticks = 0
+_ALTI_BYTES_PER_READ = const(8) # Bytes for a full read of the alti
+_ALTI_BYTES_PER_SAVE = const((_TICKS_PER_SAVE // _TICKS_PER_ALTI) * _ALTI_BYTES_PER_READ) 
+_ACCEL_BARRAY_SIZE = const(_ACCEL_BYTES_PER_SAVE * 2) # Memory for accel data
+_ALTI_BARRAY_SIZE = const(_ALTI_BYTES_PER_SAVE * 2) # Memory for alti data
+_DURATION_MINS = const(1)
+_DURATION_TICKS = const(((_DURATION_MINS * 60) * 1000) // _TICK_RATE_MS)
+_RESET_DATA = const(False) # True to wipe all recorded data and start over
 
+# Make sure our constants aren't set wrong / going to break things
+assert _TICKS_PER_SAVE % _TICKS_PER_ALTI == 0, "_TICKS_PER_SAVE must be a multiple of _TICKS_PER_ALTI"
+assert ((_DURATION_MINS * 60) * 1000) % _TICK_RATE_MS == 0, "_DURATION_MINS must (after converting to ms) be a multiple of _TICK_RATE_MS"
+
+# Prep filesystem
 os.chdir("/data")
 if _RESET_DATA:
+    # Wipe all existing data
     for dir in os.listdir():
         os.chdir(dir)
         for file in os.listdir():
@@ -62,6 +64,8 @@ if _RESET_DATA:
     os.mkdir("1")
     os.chdir("1")
 else:
+    # Make a new directory named as an integer one higher than the highest 
+    # existing directory
     new_dir = str(int(sorted([int(i) for i in os.listdir()]).pop()) + 1)
     os.mkdir(new_dir)
     os.chdir(new_dir)
@@ -70,7 +74,13 @@ else:
 mpu = MPU6050(bus=0, sda=Pin(4), scl=Pin(5), ofs=(638, -3813, 866, 53, 17, 3), gyro=GYRO_FS_1000, accel=ACCEL_FS_16, rate=1)
 bme = BME280(i2c=I2C(1, sda=Pin(10), scl=Pin(11), freq=400000))
 
+############################
+# File I/O                 #
+############################
+
+# Runs as a thread so the main polling can continue while we save the data
 def write_files_thd(accel_data : memoryview, alti_data : memoryview, seq_num : int) -> None:
+    # Blue LED means saving to disk
     blu_led.on()
     str_seq_num = str(seq_num)
     print("len(accel_data) = " + str(len(accel_data)))
@@ -87,27 +97,29 @@ def write_files_thd(accel_data : memoryview, alti_data : memoryview, seq_num : i
     return
 
 @micropython.native
-def main_portion() -> int:
-    total_ticks = 0
+def main_portion():
+    # These arrays are twice the size of the amount of data recorded between 
+    # two saves. The idea is to:
+    # 1. Initialize them only once, 
+    # 2. First, write to the first half,
+    # 3. Then, save the first half to flash while writing to the second half,
+    # 4. Then, save the second half to flash while writing to the first half
+    # 5. and keep cycling like that (steps 3 and 4) until we're done.
     accel_data = bytearray(_ACCEL_BARRAY_SIZE)
     alti_data = bytearray(_ALTI_BARRAY_SIZE)
-    mv_accel_data = memoryview(accel_data)
+    mv_accel_data = memoryview(accel_data) # Memoryviews for efficiency
     mv_alti_data = memoryview(alti_data)
-    tick = -1
-    seq_num = 0
-    accel_index_nxt = 0
-    alti_index_nxt = 0
+    tick = -1 # The current tick, ie, current sample number
+    seq_num = 0 # Tracks how many writes to flash we've done
+    accel_index_nxt = 0 # See accel_index calculation below
+    alti_index_nxt = 0 # See alti_index calculation below
 
-    red_led.off()
-    grn_led.on()
+    red_led.off() # Initialization is over at this point
+    grn_led.on() # Green LED means in the main processing loop
 
     while tick <= _DURATION_TICKS:
-        main_loop_start = time.ticks_cpu()
         tick += 1
-        
-        
-        # CURR_BARO_PRESSURE = 1024
-        
+                
         """
         ###
         # ALTIMETER READING AND PRINTING
@@ -141,45 +153,44 @@ def main_portion() -> int:
         # print("===========================")
         """
 
+        # If true, the user requests that we wrap it up, so we write whatever we have to disk and bail out.
         if shutdown_button.value() == 1:
-            # User requests that we wrap it up, so we write whatever we have to disk and bail out.
             print("Got shutdown command, saving state and then quitting...")
             seq_num += 1
-            if seq_num & 1:
+            if seq_num & 1: # seq_num is odd, write the first half of the array
                 _thread.start_new_thread(write_files_thd, (mv_accel_data[:_ACCEL_BYTES_PER_SAVE], mv_alti_data[:_ALTI_BYTES_PER_SAVE], seq_num))
-            else:
+            else: # seq_num is even, write the second half of the array
                 _thread.start_new_thread(write_files_thd, (mv_accel_data[_ACCEL_BYTES_PER_SAVE:], mv_alti_data[_ALTI_BYTES_PER_SAVE:], seq_num)) 
-            return total_ticks
+            return
 
+        # We write from the previous index...
         accel_index = accel_index_nxt % _ACCEL_BARRAY_SIZE
+        # ... to the previous index + the number of bytes for one reading
         accel_index_nxt = (accel_index + _ACCEL_BYTES_PER_READ) 
         mv_accel_data[accel_index : accel_index_nxt] = mpu.raw_data
-        tick_mod_alti = tick % _TICKS_PER_ALTI
-        if tick_mod_alti == 0:
+
+        if tick % _TICKS_PER_ALTI == 0:
+            # We write from the previous index...
             alti_index = alti_index_nxt % _ALTI_BARRAY_SIZE
+            # ... to the previous index + the number of bytes for one reading
             alti_index_nxt = (alti_index + _ALTI_BYTES_PER_READ) 
             mv_alti_data[alti_index : alti_index + _ALTI_BYTES_PER_READ] = bme.rawer_data
-            tick_mod_save = tick % _TICKS_PER_SAVE
-            if tick_mod_save == 0 and tick > 0:
+
+            if tick % _TICKS_PER_SAVE == 0 and tick > 0:
                 seq_num += 1
-                if seq_num & 1:
+                if seq_num & 1: # seq_num is odd, write the first half of the array
                     _thread.start_new_thread(write_files_thd, (mv_accel_data[:_ACCEL_BYTES_PER_SAVE], mv_alti_data[:_ALTI_BYTES_PER_SAVE], seq_num))
-                else:
+                else: # seq_num is even, write the second half of the array
                     _thread.start_new_thread(write_files_thd, (mv_accel_data[_ACCEL_BYTES_PER_SAVE:], mv_alti_data[_ALTI_BYTES_PER_SAVE:], seq_num)) 
         
-        main_loop_end = time.ticks_cpu()
-        main_loop_ticks = time.ticks_diff(main_loop_end, main_loop_start)
-        total_ticks += main_loop_ticks
-        # print("This iteration took " + str(main_loop_ticks) + " ticks")
-        
         utime.sleep_ms(_TICK_RATE_MS)
-        
-    return total_ticks
+        # machine.lightsleep(_TICK_RATE_MS)
 
-total_ticks = main_portion()
+main_portion()
+
 grn_led.off()
 utime.sleep_ms(500) # give files time to finish writing
-print("Total ticks in main loop: " + str(total_ticks))
+# machine.lightsleep(_TICK_RATE_MS)
 print("Done!")
 
 
