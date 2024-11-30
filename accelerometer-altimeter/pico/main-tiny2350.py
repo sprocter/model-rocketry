@@ -1,4 +1,4 @@
-from machine import Pin, Signal, I2C
+from machine import Pin, PWM, Signal, I2C
 from micropython import const
 from struct import unpack
 import time
@@ -22,26 +22,10 @@ import time
 # Initialization / Startup #
 ############################
 
-# Slow things down for lower power consumption, see neat chart on
-# page 1341 of the RP2350 datasheet
-# machine.freq(65000000)
-
-# Set up status LEDs
-red_led = Signal(Pin(18, Pin.OUT), invert = True)
-grn_led = Signal(Pin(19, Pin.OUT), invert = True)
-blu_led = Signal(Pin(20, Pin.OUT), invert = True)
-
-red_led.off()
-grn_led.off()
-blu_led.off()
-
-# Set up save / shutdown button
-shutdown_button = Signal(Pin(23, Pin.IN), invert = True)
-
-# Red LED indicates the system is initializing...
-# red_led.on()
-
 # Constants
+_PWM_LED_DUTY_ON = 1024
+_PWM_LED_DUTY_OFF = 0
+
 _ACCEL_ADDR = const(0x68) # Default ICM20649 I2C Addr: 104
 _REG_BANK_SEL = const(0x7F) # All banks
 _LP_CONFIG = const(0x05) # Bank 0, pg 39
@@ -56,6 +40,20 @@ _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 
 _ALTI_ADDR = const(0x63) # Default ICP10124 I2C Addr: 99
 _CURR_BARO_PRESSURE = const(1007)
+
+# Slow things down for lower power consumption, see neat chart on
+# page 1341 of the RP2350 datasheet
+# machine.freq(65000000)
+
+# Set up status LEDs 
+# Red means loading, green means sensing, blue means writing to flash
+red_led = PWM(Pin(18, Pin.OUT), freq=1000, duty_u16=_PWM_LED_DUTY_ON, invert=True)
+grn_led = PWM(Pin(19, Pin.OUT), freq=1000, duty_u16=_PWM_LED_DUTY_OFF, invert=True)
+blu_led = PWM(Pin(20, Pin.OUT), freq=1000, duty_u16=_PWM_LED_DUTY_OFF, invert=True)
+
+
+# Set up save / shutdown button
+shutdown_button = Signal(Pin(23, Pin.IN), invert = True)
 
 alti_calib_data = list()
 i2c = I2C(id=0, scl=13, sda=12, freq=400000)
@@ -73,68 +71,56 @@ def read_alti_calib():
     return alti_calib_data
 
 def initialize_accel():
-    write_byte = bytearray(1)
-
-    # Begin with Bank 0 configuration    
-    write_byte[0] = 0b00000000
-    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, write_byte)
+    # Begin with Bank 0 configuration
+    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b'\x00')
 
     # Reset the device to default settings
-    write_byte[0] = 0b10000000
-    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x80') # 0b10000001
     time.sleep_ms(5)
     while i2c.readfrom_mem(_ACCEL_ADDR, _PWR_MGMT_1, 1) == 128:
         print("waiting")
         time.sleep_ms(5)
 
     # Turn low power off, temperature sensor off, use best available clock source
-    write_byte[0] = 0b00001001
-    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x09') # 0b00001001
     time.sleep_ms(30)
 
     # Turn off the gyroscope, turn on the accelerometer
-    write_byte[0] = 0b00000111
-    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_2, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_2, b'\x07') # 0b00000111
 
     # Operate accelerometer in duty cycled mode
-    write_byte[0] = 0b0010000
-    i2c.writeto_mem(_ACCEL_ADDR, _LP_CONFIG, write_byte)
+    # i2c.writeto_mem(_ACCEL_ADDR, _LP_CONFIG, b'\x20') # 0b00100000
 
     # Now on to Bank 2 configuration
-    write_byte[0] = 0b00100000
-    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b'\x20') # 0b00100000
     time.sleep_ms(5)
     
-    write_byte[0] = 0b00000001
-    i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b'\x01')
 
     # Sample rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 112.5
     # Split across two bytes, 12 bits
-    write_byte[0] = 0b00000000 # MSB
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, write_byte)
-    write_byte[0] = 0b00001010 # LSB
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, write_byte)
+    # MSB, 0b00000000
+    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b'\x00') 
+    # LSB, 0b00001010
+    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, b'\x0A')
     
     # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
-    write_byte[0] = 0b00011111
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, b'\x1F') # 0b00011111
 
     # Average 4 samples (would be 1, but we're using the DLPF)
-    write_byte[0] = 0b00000001
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG_2, write_byte)
+    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG_2, b'\x01') # 0b00000001
 
-    #Back to Bank 0 
-    write_byte[0] = 0b00000000
-    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, write_byte)
+    #Back to Bank 0
+    i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL,  b'\x00')
 
     time.sleep_ms(100)
     # Expected power consumption: 120uA
 
-
 def print_accel_data(reading : bytearray):
     raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading[:6])
+    print(unpack(">hhh", reading[:6]))
     # raw_gyro_x, raw_gyro_y, raw_gyro_z = unpack(">hhh", reading[6:12])
-
+    
     # Accelerometer "sensitivity scale factors" on page 13
     accel_x = (raw_accel_x / 1024)
     accel_y = (raw_accel_y / 1024)
@@ -188,17 +174,20 @@ def print_alti_data(reading : bytearray):
 def init():
     initialize_accel()
     read_alti_calib()
+    red_led.duty_u16(_PWM_LED_DUTY_OFF)
 
 def main_portion():
-    for i in range(2):
+    grn_led.duty_u16(_PWM_LED_DUTY_ON)
+    for i in range(40):
         # Read from the accelerometer
-        temp_data = bytearray(6)
+        temp_data = bytearray(14)
         i2c.readfrom_mem_into(_ACCEL_ADDR, _ACCEL_XOUT_H, temp_data)
         print_accel_data(temp_data)
 
         # Read from altimeter
         temp_data_2 = bytearray(9)
-        i2c.writeto(_ALTI_ADDR, bytes.fromhex("609C")) # Request Low Power, Temp 1st
+        # Request Low Power, Temp 1st
+        i2c.writeto(_ALTI_ADDR, b'\x60\x9C') 
         time.sleep_ms(3)
         i2c.readfrom_into(_ALTI_ADDR, temp_data_2)
         print_alti_data(temp_data_2)
@@ -206,20 +195,7 @@ def main_portion():
         print("")
         
         time.sleep_ms(100)
-
-# red_led.off()
-# grn_led.off()
-# write_byte = bytearray(1)
-# write_byte[0] = 0b00000000
-# i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, write_byte)
-
-
-# print(bin(int.from_bytes(i2c.readfrom_mem(_ACCEL_ADDR, _GYRO_CONFIG_1, 1))))
-# print(bin(int.from_bytes(i2c.readfrom_mem(_ACCEL_ADDR, _ACCEL_CONFIG, 1))))
-# print(temp_data)
-# print(i2c.readfrom_mem(_ACCEL_ADDR, 0x00, 1))
-# i2c.writeto(_ALTI_ADDR, bytes.fromhex("EFC8")) # Request "ID" register
-# print(bin(int.from_bytes(i2c.readfrom(_ALTI_ADDR, 2))))
+    grn_led.duty_u16(_PWM_LED_DUTY_OFF)
 
 init()
 main_portion()
