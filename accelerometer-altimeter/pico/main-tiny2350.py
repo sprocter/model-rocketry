@@ -2,30 +2,34 @@ from machine import Pin, PWM, Signal, I2C
 from micropython import const
 from struct import unpack
 import time
+import gc
 
 # TODO: Lots, oy.
 #   X. Implement pressure translation. See page 18 of the datasheet, and also https://github.com/pimoroni/icp10125-python/blob/main/icp10125/__init__.py
 #       X And also altitude!
 #   X. Implement configuration
 #   3. Self-tests
-#   4. Calibration
+#   X. Calibration
 #   X. FIFO
 #   6. General cleanup / organization.
 #       * Classes?
 #       * Methods, to be sure
-#       * Constants. Lots of constants.
-#   7. Bring over loop from 2040-w version
-#   8. Bring over file i/o from 2040-w version
-#   9. Port printing / decoding to "tera" implementation
+#       X Constants. Lots of constants.
+#   X. Bring over loop from 2040-w version
+#   X. Bring over file i/o from 2040-w version
+#   X. Port printing / decoding to "tera" implementation
 
 ############################
 # Initialization / Startup #
 ############################
 
-# Constants
-_PWM_LED_DUTY_ON = 1024
-_PWM_LED_DUTY_OFF = 0
+## Constants ##
 
+# LED Control #
+_PWM_LED_DUTY_ON = const(1024)
+_PWM_LED_DUTY_OFF = const(0)
+
+# Accelerometer Registers #
 _ACCEL_ADDR = const(0x68) # Default ICM20649 I2C Addr: 104
 _REG_BANK_SEL = const(0x7F) # All banks
 _USER_CTRL = const(0x03) # Bank 0, pg 38
@@ -43,8 +47,6 @@ _ACCEL_SMPLRT_DIV_2 = const(0x11) # Bank 2, pg 65
 _ACCEL_CONFIG = const(0x14) # Bank 2, pg 66
 _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
-
-_CURR_BARO_PRESSURE = const(1019)
 
 # Slow things down for lower power consumption, see neat chart on
 # page 1341 of the RP2350 datasheet
@@ -88,7 +90,7 @@ def initialize_accel():
     # Enable ODR start-time alignment
     i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b'\x01')
 
-    # Sample rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 112.5
+    # Sample rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.273
     # Split across two bytes, 12 bits
     # MSB, 0b00000000
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b'\x00') 
@@ -127,44 +129,61 @@ def initialize_accel():
     # Expected power consumption: 120uA
 
 def print_accel_data(reading : memoryview):
+    # Accelerometer Calibration Values
+    _x_err = 0.029050755
+    _y_err = -0.008103238
+    _z_err = 0.044206185
+
     raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading)
-    # raw_gyro_x, raw_gyro_y, raw_gyro_z = unpack(">hhh", reading[6:12])
     
-    # Accelerometer "sensitivity scale factors" on page 13
-    accel_x = (raw_accel_x / 1024)
-    accel_y = (raw_accel_y / 1024)
-    accel_z = (raw_accel_z / 1024)
+    # accelerometer "sensitivity scale factors" on page 13
+    accel_x = (raw_accel_x / 1024) - _x_err
+    accel_y = (raw_accel_y / 1024) - _y_err
+    accel_z = (raw_accel_z / 1024) - _z_err
 
-    # # Gyroscope "sensitivity scale factors" on page 12
-    # gyro_x = (raw_gyro_x / 65.5)
-    # gyro_y = (raw_gyro_y / 65.5)
-    # gyro_z = (raw_gyro_z / 65.5)
-
-    # raw_temp = unpack(">h", reading[12:14])[0]
-    # temp_c = (raw_temp / 333.87) + 21.0
-    # temp_f = temp_c * 1.8 + 32
     print("Accel (x, y, z):", accel_x, accel_y, accel_z)
-    # print("Gyro (x, y, z):", gyro_x, gyro_y, gyro_z)
-    # print("Temp (Accel):", temp_f)
 
 def init():
     initialize_accel()
     red_led.duty_u16(_PWM_LED_DUTY_OFF)
 
 def main_portion():
-    grn_led.duty_u16(_PWM_LED_DUTY_ON)
-    accel_data = bytearray(2000) # Shouldn't be larger than ~1800
+    accel_data = bytearray(4000) # Shouldn't be larger than ~1800
     accel_mv = memoryview(accel_data)
     fifo_count_bytes = bytearray(2)
+    
+    with open('accel.bin', 'wb') as f:
+        pass # nuke the file 
+    
     for i in range(10):
+        start_ms = time.ticks_ms()
+        grn_led.duty_u16(_PWM_LED_DUTY_ON)
+        remainder_count = 0
         i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
         fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-        print("FIFO Size (bytes): ", fifo_count)
         
-        i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+        # Reading more than 1878 bytes reliably causes a timeout.
+        # We do 12 fewer for a little breathing room
+        if fifo_count > 1866:
+            remainder_count = min(fifo_count - 1866, 1866)
+            fifo_count = 1866
+            i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+            print("Taking out da trash (bytes): ", remainder_count)
+            i2c.readfrom_mem(_ACCEL_ADDR, _FIFO_R_W, remainder_count)
+        else:
+            i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+
+        blu_led.duty_u16(_PWM_LED_DUTY_ON)
+        with open('accel.bin', 'ab') as f:
+            f.write(accel_mv[0 : fifo_count])
+        blu_led.duty_u16(_PWM_LED_DUTY_OFF)
         
-        time.sleep_ms(3000)
-    grn_led.duty_u16(_PWM_LED_DUTY_OFF)
+        grn_led.duty_u16(_PWM_LED_DUTY_OFF)
+        end_ms = time.ticks_ms()
+        if shutdown_button.value() == 1:
+            print("Got shutdown command. Quitting...")
+            break
+        time.sleep_ms(3000 - time.ticks_diff(end_ms, start_ms))
 
 init()
 main_portion()
