@@ -24,10 +24,17 @@ import gc
 ############################
 
 ## Constants ##
+_CURR_BARO_PRESSURE = const(1016)
 
 # LED Control #
 _PWM_LED_DUTY_ON = const(1024)
 _PWM_LED_DUTY_OFF = const(0)
+
+# Altimeter Registers #
+_ALTI_ADDR = const(0x77) # Default BMP290 I2C Addr: 119
+_CALIB_COEFFS = const(0x31) # pg 28
+_DATA_0 = const(0x04) # pg 32
+_PWR_CTRL = const(0x1B) # pg 36
 
 # Accelerometer Registers #
 _ACCEL_ADDR = const(0x68) # Default ICM20649 I2C Addr: 104
@@ -62,6 +69,19 @@ blu_led = PWM(Pin(20, Pin.OUT), freq=1000, duty_u16=_PWM_LED_DUTY_OFF, invert=Tr
 shutdown_button = Signal(Pin(23, Pin.IN), invert = True)
 
 i2c = I2C(id=0, scl=13, sda=12, freq=400000)
+
+def initialize_alti() -> bytearray:
+
+    # Turn on normal mode, the pressure sensor, and the temperature sensor
+    pwr_ctrl = bytearray(1)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _PWR_CTRL, pwr_ctrl)
+    pwr_ctrl[0] |= 0b00110011
+    i2c.writeto_mem(_ALTI_ADDR, _PWR_CTRL, pwr_ctrl)
+
+    # Get calibration coefficients
+    coeffs_packed = bytearray(21)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
+    return coeffs_packed
 
 def initialize_accel():
     # Begin with Bank 0 configuration
@@ -128,6 +148,54 @@ def initialize_accel():
 
     # Expected power consumption: 120uA
 
+def print_alti_data(reading : memoryview, coeffs_packed : bytearray):
+    coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
+    par_t1 = coeffs_unpacked[0] / (2 ** -8)
+    par_t2 = coeffs_unpacked[1] / (2 ** 30)
+    par_t3 = coeffs_unpacked[2] / (2 ** 48)
+
+    par_p1 = (coeffs_unpacked[3] - (2 ** 14))/(2 ** 20)
+    par_p2 = (coeffs_unpacked[4] - (2 ** 14))/(2 ** 29)
+    par_p3 = coeffs_unpacked[5]/(2 ** 32)
+    par_p4 = coeffs_unpacked[6]/(2 ** 37)
+    par_p5 = coeffs_unpacked[7]/(2 ** -3)
+    par_p6 = coeffs_unpacked[8]/(2 ** 6)
+    par_p7 = coeffs_unpacked[9]/(2 ** 8)
+    par_p8 = coeffs_unpacked[10]/(2 ** 15)
+    par_p9 = coeffs_unpacked[11]/(2 ** 48)
+    par_p10 = coeffs_unpacked[12]/(2 ** 48)
+    par_p11 = coeffs_unpacked[13]/(2 ** 65)
+
+    raw_pressure = reading[2] << 16 | reading[1] << 8 | reading[0]
+    raw_temp = reading[5] << 16 | reading[4] << 8 | reading[3]
+
+    partial_data1 = raw_temp - par_t1
+    partial_data2 = partial_data1 * par_t2
+    temperature_c = partial_data2 + (partial_data1 ** 2) * par_t3
+    temperature_f = (temperature_c * 1.8) + 32
+
+    partial_data1 = par_p6 * temperature_c
+    partial_data2 = par_p7 * (temperature_c ** 2)
+    partial_data3 = par_p8 * (temperature_c ** 3)
+    partial_out1 = par_p5 + partial_data1 + partial_data2 + partial_data3
+
+    partial_data1 = par_p2 * temperature_c
+    partial_data2 = par_p3 * (temperature_c ** 2)
+    partial_data3 = par_p4 * (temperature_c ** 3)
+    partial_out2 = raw_pressure * (par_p1 + partial_data1 + partial_data2 + partial_data3)
+
+    partial_data1 = raw_pressure ** 2
+    partial_data2 = par_p9 + par_p10 * temperature_c
+    partial_data3 = partial_data1 * partial_data2
+    partial_data4 = partial_data3 + (raw_pressure ** 3) * par_p11
+
+    pressure_hpa = partial_out1 + partial_out2 + partial_data4
+    alti_ft = ((1-((float(pressure_hpa/100)/_CURR_BARO_PRESSURE) ** .190284)) * 145366.45)
+
+    print("Temperature (f): ", temperature_f)
+    print("Pressure (hPa): ", pressure_hpa)
+    print("Altitude (ft): ", alti_ft)
+ 
 def print_accel_data(reading : memoryview):
     # Accelerometer Calibration Values
     _x_err = 0.029050755
@@ -144,10 +212,18 @@ def print_accel_data(reading : memoryview):
     print("Accel (x, y, z):", accel_x, accel_y, accel_z)
 
 def init():
-    initialize_accel()
+    coeffs_packed = initialize_alti()
+    # initialize_accel()
     red_led.duty_u16(_PWM_LED_DUTY_OFF)
+    return coeffs_packed
 
-def main_portion():
+def main_portion(coeffs_packed : bytearray):
+    alti_data = bytearray(6)
+    alti_mv = memoryview(alti_data)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _DATA_0, alti_mv)
+    print_alti_data(alti_mv, coeffs_packed)
+
+    return 
     accel_data = bytearray(4000) # Shouldn't be larger than ~1800
     accel_mv = memoryview(accel_data)
     fifo_count_bytes = bytearray(2)
@@ -185,5 +261,5 @@ def main_portion():
             break
         time.sleep_ms(3000 - time.ticks_diff(end_ms, start_ms))
 
-init()
-main_portion()
+coeffs_packed = init()
+main_portion(coeffs_packed)
