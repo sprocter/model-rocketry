@@ -3,32 +3,44 @@ from micropython import const
 from struct import unpack
 from neopixel import NeoPixel
 import time
+import gc
+import machine
 
 # TODO:
-#   1. Altimeter FIFO
-#   2. Altimeter file output
-#   3. Tera support for altimeter output
-#   4. Cleanup
+#   1. Tera support for altimeter output
+#   2. Cleanup
+#   3. Sleep (light? deep? interrupts? timers?)
 
 ############################
 # Initialization / Startup #
 ############################
 
 ## Constants ##
-_CURR_BARO_PRESSURE = const(1013)
+_CURR_BARO_PRESSURE = const(1008)
+_PERIOD_MS = const(2500) # Much higher than 2.5s and we risk overflowing the 
+#                          altimeter's FIFO buffer 😪
 
 # LED Control #
 _NEOPIXEL_BRIGHTNESS = const(1) # 1-255
-_NEOPIXEL_RED = (_NEOPIXEL_BRIGHTNESS, 0, 0)
-_NEOPIXEL_GRN = (0, _NEOPIXEL_BRIGHTNESS, 0)
-_NEOPIXEL_BLU = (0, 0, _NEOPIXEL_BRIGHTNESS)
 _NEOPIXEL_OFF = (0, 0, 0)
+#                                            # LED Meaning:
+_NEOPIXEL_RED = (_NEOPIXEL_BRIGHTNESS, 0, 0) # Initialization
+_NEOPIXEL_GRN = (0, _NEOPIXEL_BRIGHTNESS, 0) # Reading FIFO buffers
+_NEOPIXEL_BLU = (0, 0, _NEOPIXEL_BRIGHTNESS) # File I/O
 
 # Altimeter Registers #
 _ALTI_ADDR = const(0x77) # Default BMP290 I2C Addr: 119
 _CALIB_COEFFS = const(0x31) # pg 28
 _DATA_0 = const(0x04) # pg 32
-_PWR_CTRL = const(0x1B) # pg 36
+_ALTI_FIFO_LENGTH_0 = const(0x12) # pg 33
+_ALTI_FIFO_DATA = const(0x14) # pg 34
+_ALTI_FIFO_CONFIG_1 = const(0x17) # pg 34
+_ALTI_FIFO_CONFIG_2 = const(0x18) # pg 35
+_ALTI_PWR_CTRL = const(0x1B) # pg 36
+_ALTI_OSR = const(0x1C) # pg 37
+_ALTI_ODR = const(0x1D) # pg 37
+_ALTI_CONFIG = const(0x1F) # pg 39
+_ALTI_CMD = const(0x7E) # pg 39
 
 # Accelerometer Registers #
 _ACCEL_ADDR = const(0x68) # Default ICM20649 I2C Addr: 104
@@ -49,11 +61,14 @@ _ACCEL_CONFIG = const(0x14) # Bank 2, pg 66
 _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
 
-# Slow things down for lower power consumption, see neat chart on
-# page 1341 of the RP2350 datasheet
-# machine.freq(65000000)
 
-# Set up status LEDs 
+## Slow down the CPU ##
+machine.freq(40000000) # Significantly lowers power consumption, see table on 
+#                        page 66 of the esp32 datasheet
+
+## Set up Globals ##
+
+# Set up status LEDs #
 neopixel_pwr_pin = Pin(38, Pin.OUT)
 neopixel_pwr_pin.on()
 neopixel_pin = Pin(39, Pin.OUT)
@@ -61,18 +76,38 @@ neopixel = NeoPixel(neopixel_pin, 1)
 neopixel[0] = _NEOPIXEL_RED # type: ignore
 neopixel.write()
 
-# Set up save / shutdown button
+# Set up save / shutdown button #
 shutdown_button = Signal(Pin(0, Pin.IN), invert = True)
 
+# Connect to sensors #
 i2c = I2C(1, scl=40, sda=41, freq=400000)
 
 def initialize_alti() -> bytearray:
+    # Reset the device
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b'\xB6') 
+    time.sleep_ms(5)
 
     # Turn on normal mode, the pressure sensor, and the temperature sensor
-    pwr_ctrl = bytearray(1)
-    i2c.readfrom_mem_into(_ALTI_ADDR, _PWR_CTRL, pwr_ctrl)
-    pwr_ctrl[0] |= 0b00110011
-    i2c.writeto_mem(_ALTI_ADDR, _PWR_CTRL, pwr_ctrl)
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_PWR_CTRL, b'\x33') # RR11RR11
+
+    # Turn on FIFO, don't stop when FIFO is full, don't return "sensortime" #
+    # frames, do store pressure data, do store temperature data
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_FIFO_CONFIG_1, b'\x19')  # RRR11001
+
+    # Store filtered data, don't downsample
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_FIFO_CONFIG_2, b'\x08')  # RRR01000
+
+    # Oversampling: Temperature 1 (000), Pressure 8 (011)
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_OSR, b'\x03')  # RR000011
+
+    # Data rate: 25 Hz / 40ms sampling period
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_ODR, b'\x03')  # RRR00011
+
+    # IIR Filter: 3 (010)
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_CONFIG, b'\x04') # RRR010R
+
+    # Clear FIFO now that we've messed with the settings
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b'\xB0') 
 
     # Get calibration coefficients
     coeffs_packed = bytearray(21)
@@ -144,7 +179,7 @@ def initialize_accel():
 
     # Expected power consumption: 120uA
 
-def print_alti_data(reading : memoryview, coeffs_packed : bytearray):
+def print_alti_data(pressure_reading : memoryview, temp_reading : memoryview, coeffs_packed : bytearray):
     coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
     par_t1 = coeffs_unpacked[0] / (2 ** -8)
     par_t2 = coeffs_unpacked[1] / (2 ** 30)
@@ -162,8 +197,8 @@ def print_alti_data(reading : memoryview, coeffs_packed : bytearray):
     par_p10 = coeffs_unpacked[12]/(2 ** 48)
     par_p11 = coeffs_unpacked[13]/(2 ** 65)
 
-    raw_pressure = reading[2] << 16 | reading[1] << 8 | reading[0]
-    raw_temp = reading[5] << 16 | reading[4] << 8 | reading[3]
+    raw_pressure = pressure_reading[2] << 16 | pressure_reading[1] << 8 | pressure_reading[0]
+    raw_temp = temp_reading[2] << 16 | temp_reading[1] << 8 | temp_reading[0]
 
     partial_data1 = raw_temp - par_t1
     partial_data2 = partial_data1 * par_t2
@@ -208,57 +243,69 @@ def print_accel_data(reading : memoryview):
     print("Accel (x, y, z):", accel_x, accel_y, accel_z)
 
 def init():
+    with open('accel.bin', 'wb') as f:
+        pass # nuke the file 
+    with open('alti.bin', 'wb') as f:
+        pass # nuke the file 
+
     coeffs_packed = initialize_alti()
     initialize_accel()
+    gc.collect()
     neopixel[0] = _NEOPIXEL_OFF # type: ignore
     neopixel.write()
     return coeffs_packed
 
-def main_portion(coeffs_packed : bytearray):
+def single_alti_reading(coeffs_packed : bytearray) -> None:
     alti_data = bytearray(6)
     alti_mv = memoryview(alti_data)
     i2c.readfrom_mem_into(_ALTI_ADDR, _DATA_0, alti_mv)
-    print_alti_data(alti_mv, coeffs_packed)
+    print_alti_data(alti_mv[0:3], alti_mv[3:6], coeffs_packed)
 
-    return 
-    accel_data = bytearray(4000) # Shouldn't be larger than ~1800
-    accel_mv = memoryview(accel_data)
+def read_alti_fifo(alti_mv : memoryview, coeffs_packed : bytearray) -> int:
     fifo_count_bytes = bytearray(2)
-    
-    with open('accel.bin', 'wb') as f:
-        pass # nuke the file 
+    i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
+    fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
+    print("Alti FIFO size: ", fifo_count)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
+    return fifo_count
+
+def read_accel_fifo(accel_mv : memoryview) -> int:
+    fifo_count_bytes = bytearray(2)
+    i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
+    fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
+    print("Accel FIFO size: ", fifo_count)
+    i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+    return fifo_count
+
+def main_portion(coeffs_packed : bytearray):
+    accel_data = bytearray(4096) # Shouldn't be larger than ~1500
+    accel_mv = memoryview(accel_data)
+    alti_data = bytearray(512) # Shouldn't be larger than ~450
+    alti_mv = memoryview(alti_data)
     
     for i in range(10):
         start_ms = time.ticks_ms()
         neopixel[0] = _NEOPIXEL_GRN # type: ignore
         neopixel.write()
-        remainder_count = 0
-        i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
-        fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-        
-        # Reading more than 1878 bytes reliably causes a timeout.
-        # We do 12 fewer for a little breathing room
-        if fifo_count > 1866:
-            remainder_count = min(fifo_count - 1866, 1866)
-            fifo_count = 1866
-            i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
-            print("Taking out da trash (bytes): ", remainder_count)
-            i2c.readfrom_mem(_ACCEL_ADDR, _FIFO_R_W, remainder_count)
-        else:
-            i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+
+        accel_bytes = read_accel_fifo(accel_mv)
+        alti_bytes = read_alti_fifo(alti_mv, coeffs_packed)
         
         neopixel[0] = _NEOPIXEL_BLU # type: ignore
         neopixel.write()
         with open('accel.bin', 'ab') as f:
-            f.write(accel_mv[0 : fifo_count])
-        
+            f.write(accel_mv[0 : accel_bytes])
+        with open('alti.bin', 'ab') as f:
+            f.write(alti_mv[0 : alti_bytes])
+
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         end_ms = time.ticks_ms()
         if shutdown_button.value() == 1:
             print("Got shutdown command. Quitting...")
             break
-        time.sleep_ms(3000 - time.ticks_diff(end_ms, start_ms))
+        loop_time = time.ticks_diff(end_ms, start_ms)
+        time.sleep_ms(_PERIOD_MS - loop_time)
 
 coeffs_packed = init()
 main_portion(coeffs_packed)
