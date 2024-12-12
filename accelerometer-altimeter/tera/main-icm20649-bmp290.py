@@ -47,4 +47,3 @@ for launch in scandir():
         for i in range(len(accel_data)//6):
             f.write(','.join(str(x) for x in decode_accel_data(accel_data[i * 6 : (i + 1) * 6], next(accel_timestamp))) + "\n")
             i += 1
-    alti_data.clear()
