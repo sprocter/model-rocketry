@@ -5,11 +5,14 @@ from neopixel import NeoPixel
 import time
 import gc
 import machine
+import os
+import vfs
 
 # TODO:
-#   1. Tera support for altimeter output
-#   2. Cleanup
-#   3. Sleep (light? deep? interrupts? timers?)
+#   1. Continue investigating / working around occasional slow file I/O
+#   2. Sleep
+#       1. Light sleep until deep is proven necessary
+#       2. Add const option or USB power detection
 
 ############################
 # Initialization / Startup #
@@ -17,8 +20,12 @@ import machine
 
 ## Constants ##
 _CURR_BARO_PRESSURE = const(1008)
-_PERIOD_MS = const(2500) # Much higher than 2.5s and we risk overflowing the 
-#                          altimeter's FIFO buffer 😪
+_RESET_DATA = const(False)
+_PERIOD_MS = const(2727) # Much higher than 2.5s and we risk overflowing the 
+#                        # altimeter's FIFO buffer 😪
+_DURATION_MINS = const(1)
+_DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
+
 
 # LED Control #
 _NEOPIXEL_BRIGHTNESS = const(1) # 1-255
@@ -179,6 +186,24 @@ def initialize_accel():
 
     # Expected power consumption: 120uA
 
+def initialize_filesystem() -> None:
+    if _RESET_DATA:
+        # Wipe all existing data
+        vfs.umount('/')
+        vfs.VfsLfs2.mkfs(bdev)
+        vfs.mount(bdev, '/')
+        os.mkdir("data")
+        os.chdir("data")
+        os.mkdir("1")
+        os.chdir("1")
+    else:
+        os.chdir("data")
+        # Make a new directory named as an integer one higher than the highest 
+        # existing directory
+        new_dir = str(int(sorted([int(i) for i in os.listdir()]).pop()) + 1)
+        os.mkdir(new_dir)
+        os.chdir(new_dir)
+
 def print_alti_data(pressure_reading : memoryview, temp_reading : memoryview, coeffs_packed : bytearray):
     coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
     par_t1 = coeffs_unpacked[0] / (2 ** -8)
@@ -243,11 +268,7 @@ def print_accel_data(reading : memoryview):
     print("Accel (x, y, z):", accel_x, accel_y, accel_z)
 
 def init():
-    with open('accel.bin', 'wb') as f:
-        pass # nuke the file 
-    with open('alti.bin', 'wb') as f:
-        pass # nuke the file 
-
+    initialize_filesystem()
     coeffs_packed = initialize_alti()
     initialize_accel()
     gc.collect()
@@ -261,11 +282,10 @@ def single_alti_reading(coeffs_packed : bytearray) -> None:
     i2c.readfrom_mem_into(_ALTI_ADDR, _DATA_0, alti_mv)
     print_alti_data(alti_mv[0:3], alti_mv[3:6], coeffs_packed)
 
-def read_alti_fifo(alti_mv : memoryview, coeffs_packed : bytearray) -> int:
+def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
-    print("Alti FIFO size: ", fifo_count)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -273,39 +293,45 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-    print("Accel FIFO size: ", fifo_count)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
 
-def main_portion(coeffs_packed : bytearray):
-    accel_data = bytearray(4096) # Shouldn't be larger than ~1500
-    accel_mv = memoryview(accel_data)
-    alti_data = bytearray(512) # Shouldn't be larger than ~450
-    alti_mv = memoryview(alti_data)
-    
-    for i in range(10):
-        start_ms = time.ticks_ms()
-        neopixel[0] = _NEOPIXEL_GRN # type: ignore
-        neopixel.write()
+def read_fifo(accel_mv : memoryview, alti_mv : memoryview) -> tuple[int, int]:
+    neopixel[0] = _NEOPIXEL_GRN # type: ignore
+    neopixel.write()
+    accel_bytes = read_accel_fifo(accel_mv)
+    alti_bytes = read_alti_fifo(alti_mv)
+    return accel_bytes, alti_bytes
 
-        accel_bytes = read_accel_fifo(accel_mv)
-        alti_bytes = read_alti_fifo(alti_mv, coeffs_packed)
+def write_files(accel_mv : memoryview, alti_mv : memoryview, period : int) -> None:
+    neopixel[0] = _NEOPIXEL_BLU # type: ignore
+    neopixel.write()
+    with open('accel.bin', 'ab') as f:
+        f.write(accel_mv)
+    with open('alti.bin', 'ab') as f:
+        f.write(alti_mv)
+
+def main_loop():
+    accel_mv = memoryview(bytearray(4096)) # Shouldn't be larger than ~1500
+    alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~450
+    for period in range(_DURATION_PERIODS):
+        start_ms = time.ticks_ms()
         
-        neopixel[0] = _NEOPIXEL_BLU # type: ignore
-        neopixel.write()
-        with open('accel.bin', 'ab') as f:
-            f.write(accel_mv[0 : accel_bytes])
-        with open('alti.bin', 'ab') as f:
-            f.write(alti_mv[0 : alti_bytes])
+        accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
+        write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes], period)
+        file_io_time = time.ticks_diff(time.ticks_ms(), start_ms)
+
+        if shutdown_button.value() == 1:
+            print("Got shutdown command. Quitting...")
+            break
 
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         end_ms = time.ticks_ms()
-        if shutdown_button.value() == 1:
-            print("Got shutdown command. Quitting...")
-            break
         loop_time = time.ticks_diff(end_ms, start_ms)
-        time.sleep_ms(_PERIOD_MS - loop_time)
+        print(period, ": File I/O time (ms): ", file_io_time)
+        # print("Loop time (ms): ", loop_time)
+        time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
 
 coeffs_packed = init()
-main_portion(coeffs_packed)
+main_loop()
