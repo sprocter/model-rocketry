@@ -2,12 +2,27 @@ from struct import unpack
 from io import open
 from os import chdir, scandir, listdir, DirEntry
 from more_itertools import peekable
-# TODO: import filters from accelerometer
+from bokeh.plotting import figure, show
+from bokeh.io import curdoc
+
+# TODO:
+#   1. Rip out CSV generation
+#   2. Dump some combination files instead of rendering the HTML directly
+#       * Formats to consider: HTML, JSON, PNG, SVG
+#   3. Cleanup
 
 x_err = 0.029050755
 y_err = -0.008103238
 z_err = 0.044206185
 _CURR_BARO_PRESSURE = 1033
+
+xs = []
+ys = []
+zs = []
+accel_ts = []
+temps = []
+altis = []
+alti_ts = []
 
 def accel_timestamps():
     cur_timestamp = 0
@@ -26,9 +41,13 @@ def decode_accel_data(accel_reading : bytes, timestamp : float) -> tuple[float, 
     accel_x = (raw_accel_x / 1024) - x_err
     accel_y = (raw_accel_y / 1024) - y_err
     accel_z = (raw_accel_z / 1024) - z_err
+    xs.append(accel_x)
+    ys.append(accel_y)
+    zs.append(accel_z)
+    accel_ts.append(timestamp)
     return (timestamp, accel_x, accel_y, accel_z)
 
-def decode_alti_data(alti_reading : bytes) -> tuple[float, float]:
+def decode_alti_data(alti_reading : bytes, timestamp : float) -> tuple[float, float]:
     coeffs_packed = bytes.fromhex("996e384df93a1a52140601684e9d6003fabd0f05f5")
     coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
     par_t1 = coeffs_unpacked[0] / (2 ** -8)
@@ -73,6 +92,10 @@ def decode_alti_data(alti_reading : bytes) -> tuple[float, float]:
     pressure_hpa = partial_out1 + partial_out2 + partial_data4
     alti_ft = ((1-((float(pressure_hpa/100)/_CURR_BARO_PRESSURE) ** .190284)) * 145366.45)
 
+    temps.append(temperature_f)
+    altis.append(alti_ft)
+    alti_ts.append(timestamp)
+
     return (alti_ft, temperature_f)
 
 accel_data = bytes()
@@ -112,5 +135,29 @@ for launch in scandir():
                 if alti_data[alti_idx_start] & 255 == 128: # Empty frame
                     alti_idx_mod += 2
                     continue
-                f.write(str(next(alti_timestamp)) + ', , , ,' + ','.join(str(x) for x in decode_alti_data(alti_data[alti_idx_start : alti_idx_end]))+ "\n")
+                alti_ts_str = str(next(alti_timestamp))
+                f.write(alti_ts_str + ', , , ,' + ','.join(str(x) for x in decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str)))+ "\n")
                 alti_idx += 1            
+
+
+# apply theme to current document
+curdoc().theme = "dark_minimal"
+
+# create a new plot with a title and axis labels
+p = figure(
+    title="Simple line example",
+    sizing_mode="stretch_both",
+    height=1000,
+    width=1000,
+    x_axis_label="x",
+    y_axis_label="y")
+
+# add a line renderer with legend and line thickness
+p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="blue", line_width=2)
+p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="red", line_width=2)
+p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="green", line_width=2)
+p.line(alti_ts, temps, legend_label="Temperature (f)", color="orange", line_width=2)
+p.line(alti_ts, altis, legend_label="Altitude (ft)", color="purple", line_width=2)
+
+# show the results
+show(p)
