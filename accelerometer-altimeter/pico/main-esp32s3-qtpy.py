@@ -18,14 +18,30 @@ import vfs
 # Initialization / Startup #
 ############################
 
-## Constants ##
-_CURR_BARO_PRESSURE = const(1008)
-_RESET_DATA = const(False)
-_PERIOD_MS = const(2727) # Much higher than 2.5s and we risk overflowing the 
-#                        # altimeter's FIFO buffer 😪
-_DURATION_MINS = const(1)
-_DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
+### Constants ###
 
+# User-Modifiable #
+_RESET_DATA = const(False) # True to wipe all launch history
+
+_USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of... active 
+#                              # sleep? Note that setting this to True will
+#                              # break USB output. This is intended to save 
+#                              # power, use it when running on batteries
+
+_PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the 
+#                        # altimeter's FIFO buffer 😪
+
+_DURATION_MINS = const(1) # This will be approximated, unless period_ms divides 
+#                         # evenly into the duration
+
+_CURR_BARO_PRESSURE = const(1008) # Only used if the ESP32 is doing the math, 
+#                                 # not used when it's acting as a datalogger
+
+## Not User-Modifiable ##
+
+# Timing #
+_DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
+_SLEEP_LAG_MS = const(100)
 
 # LED Control #
 _NEOPIXEL_BRIGHTNESS = const(1) # 1-255
@@ -69,11 +85,11 @@ _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
 
 
-## Slow down the CPU ##
+### Slow down the CPU ###
 machine.freq(40000000) # Significantly lowers power consumption, see table on 
 #                        page 66 of the esp32 datasheet
 
-## Set up Globals ##
+### Set up Globals ###
 
 # Set up status LEDs #
 neopixel_pwr_pin = Pin(38, Pin.OUT)
@@ -306,6 +322,7 @@ def read_fifo(accel_mv : memoryview, alti_mv : memoryview) -> tuple[int, int]:
 def write_files(accel_mv : memoryview, alti_mv : memoryview, period : int) -> None:
     neopixel[0] = _NEOPIXEL_BLU # type: ignore
     neopixel.write()
+    gc.collect()
     with open('accel.bin', 'ab') as f:
         f.write(accel_mv)
     with open('alti.bin', 'ab') as f:
@@ -331,7 +348,12 @@ def main_loop():
         loop_time = time.ticks_diff(end_ms, start_ms)
         print(period, ": File I/O time (ms): ", file_io_time)
         # print("Loop time (ms): ", loop_time)
-        time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
+        if _USE_LIGHTSLEEP:
+            time.sleep_ms(_SLEEP_LAG_MS)
+            machine.lightsleep(max(0, (_PERIOD_MS - loop_time - _SLEEP_LAG_MS - _SLEEP_LAG_MS)))
+            time.sleep_ms(_SLEEP_LAG_MS)
+        else: 
+            time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
 
 coeffs_packed = init()
 main_loop()
