@@ -2,8 +2,10 @@ from struct import unpack
 from io import open
 from os import chdir, scandir, listdir, DirEntry
 from more_itertools import peekable
-from bokeh.plotting import figure, show
+from bokeh.plotting import figure, output_file, save
+from bokeh.embed import json_item
 from bokeh.io import curdoc
+from json import dump
 
 # TODO:
 #   1. Rip out CSV generation
@@ -119,45 +121,78 @@ for launch in scandir():
     alti_idx_mod = 0 
     accel_timestamp = peekable(accel_timestamps())
     alti_timestamp = peekable(alti_timestamps())
-    with open('launch'+launch.name+'.csv', 'wt') as f:
-        #f.write("acc_x, acc_y, acc_z, acc_temp_f, gyro_x, gyro_y, gyro_z, roll, pitch, alti_temp_f, alti_ft, humid_pct\n")
-        f.write("time, acc_x, acc_y, acc_z, altitude_ft, temp_f\n")
-        while accel_idx < len(accel_data)//6:
-            if accel_timestamp.peek() < alti_timestamp.peek():
-                f.write(','.join(str(x) for x in decode_accel_data(accel_data[accel_idx * 6 : (accel_idx + 1) * 6], next(accel_timestamp))) + "\n")
-                accel_idx += 1
-            else:
-                alti_idx_start = alti_idx_mod + alti_idx * 7
-                alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
-                if alti_data[alti_idx_start] & 192 == 64: # Control frame 
-                    alti_idx_mod += 2
-                    continue
-                if alti_data[alti_idx_start] & 255 == 128: # Empty frame
-                    alti_idx_mod += 2
-                    continue
-                alti_ts_str = str(next(alti_timestamp))
-                f.write(alti_ts_str + ', , , ,' + ','.join(str(x) for x in decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str)))+ "\n")
-                alti_idx += 1            
+
+    xs.clear()
+    ys.clear()
+    zs.clear()
+    accel_ts.clear()
+    temps.clear()
+    altis.clear()
+    alti_ts.clear()
+
+    while accel_idx < len(accel_data)//6:
+        alti_idx_start = alti_idx_mod + alti_idx * 7
+        alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
+            
+        if (accel_timestamp.peek() < alti_timestamp.peek()) or (alti_idx_start >= len(alti_data)):
+            decode_accel_data(accel_data[accel_idx * 6 : (accel_idx + 1) * 6], next(accel_timestamp))
+            accel_idx += 1
+        else:
+            if alti_idx_start >= len(alti_data):
+                continue
+            if alti_data[alti_idx_start] & 192 == 64: # Control frame 
+                alti_idx_mod += 2
+                continue
+            if alti_data[alti_idx_start] & 255 == 128: # Empty frame
+                alti_idx_mod += 2
+                continue
+            alti_ts_str = str(next(alti_timestamp))
+            decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str))
+            alti_idx += 1 
+    
+    # apply theme to current document
+    curdoc().theme = "dark_minimal"
+
+    output_file(filename="launch-" + launch.name + ".html", title="Launch " + launch.name + ": Acceleration and Altitude")
+
+    # create a new plot with a title and axis labels
+    p = figure(
+        title="Acceleration and Altitude, Launch " + launch.name,
+        sizing_mode="stretch_both",
+        height=1000,
+        width=1000,
+        x_axis_label="x",
+        y_axis_label="y")
+
+    # add a line renderer with legend and line thickness
+    p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="blue", line_width=2)
+    p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="red", line_width=2)
+    p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="green", line_width=2)
+    p.line(alti_ts, temps, legend_label="Temperature (f)", color="orange", line_width=2)
+    p.line(alti_ts, altis, legend_label="Altitude (ft)", color="purple", line_width=2)
+
+    save(p)
+    with open("launch-" + launch.name + ".json", "w") as json_file:
+        dump(json_item(p, "accel-alti"), json_file)
+
+    # with open('launch'+launch.name+'.csv', 'wt') as f:
+    #     #f.write("acc_x, acc_y, acc_z, acc_temp_f, gyro_x, gyro_y, gyro_z, roll, pitch, alti_temp_f, alti_ft, humid_pct\n")
+    #     f.write("time, acc_x, acc_y, acc_z, altitude_ft, temp_f\n")
+    #     while accel_idx < len(accel_data)//6:
+    #         if accel_timestamp.peek() < alti_timestamp.peek():
+    #             f.write(','.join(str(x) for x in decode_accel_data(accel_data[accel_idx * 6 : (accel_idx + 1) * 6], next(accel_timestamp))) + "\n")
+    #             accel_idx += 1
+    #         else:
+    #             alti_idx_start = alti_idx_mod + alti_idx * 7
+    #             alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
+    #             if alti_data[alti_idx_start] & 192 == 64: # Control frame 
+    #                 alti_idx_mod += 2
+    #                 continue
+    #             if alti_data[alti_idx_start] & 255 == 128: # Empty frame
+    #                 alti_idx_mod += 2
+    #                 continue
+    #             alti_ts_str = str(next(alti_timestamp))
+    #             f.write(alti_ts_str + ', , , ,' + ','.join(str(x) for x in decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str)))+ "\n")
+    #             alti_idx += 1            
 
 
-# apply theme to current document
-curdoc().theme = "dark_minimal"
-
-# create a new plot with a title and axis labels
-p = figure(
-    title="Simple line example",
-    sizing_mode="stretch_both",
-    height=1000,
-    width=1000,
-    x_axis_label="x",
-    y_axis_label="y")
-
-# add a line renderer with legend and line thickness
-p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="blue", line_width=2)
-p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="red", line_width=2)
-p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="green", line_width=2)
-p.line(alti_ts, temps, legend_label="Temperature (f)", color="orange", line_width=2)
-p.line(alti_ts, altis, legend_label="Altitude (ft)", color="purple", line_width=2)
-
-# show the results
-show(p)
