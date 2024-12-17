@@ -1,30 +1,22 @@
-from struct import unpack
 from io import open
+from json import dump
 from os import chdir, scandir, listdir, DirEntry
+from struct import unpack
+
 from more_itertools import peekable
-from bokeh.plotting import figure, output_file, save
+
 from bokeh.embed import json_item
 from bokeh.io import curdoc
-from json import dump
+from bokeh.models import LinearAxis, Range1d
+from bokeh.plotting import figure, output_file, save
 
 # TODO:
-#   1. Rip out CSV generation
-#   2. Dump some combination files instead of rendering the HTML directly
-#       * Formats to consider: HTML, JSON, PNG, SVG
-#   3. Cleanup
+#   1. Documentation pass
 
 x_err = 0.029050755
 y_err = -0.008103238
 z_err = 0.044206185
 _CURR_BARO_PRESSURE = 1033
-
-xs = []
-ys = []
-zs = []
-accel_ts = []
-temps = []
-altis = []
-alti_ts = []
 
 def accel_timestamps():
     cur_timestamp = 0
@@ -38,18 +30,14 @@ def alti_timestamps():
         yield cur_timestamp
         cur_timestamp += .04
 
-def decode_accel_data(accel_reading : bytes, timestamp : float) -> tuple[float, float, float, float]:
+def decode_accel_reading(accel_reading : bytes) -> tuple[float, float, float]:
     raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", accel_reading)
     accel_x = (raw_accel_x / 1024) - x_err
     accel_y = (raw_accel_y / 1024) - y_err
     accel_z = (raw_accel_z / 1024) - z_err
-    xs.append(accel_x)
-    ys.append(accel_y)
-    zs.append(accel_z)
-    accel_ts.append(timestamp)
-    return (timestamp, accel_x, accel_y, accel_z)
+    return (accel_x, accel_y, accel_z)
 
-def decode_alti_data(alti_reading : bytes, timestamp : float) -> tuple[float, float]:
+def decode_alti_reading(alti_reading : bytes) -> tuple[float, float]:
     coeffs_packed = bytes.fromhex("996e384df93a1a52140601684e9d6003fabd0f05f5")
     coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
     par_t1 = coeffs_unpacked[0] / (2 ** -8)
@@ -94,20 +82,11 @@ def decode_alti_data(alti_reading : bytes, timestamp : float) -> tuple[float, fl
     pressure_hpa = partial_out1 + partial_out2 + partial_data4
     alti_ft = ((1-((float(pressure_hpa/100)/_CURR_BARO_PRESSURE) ** .190284)) * 145366.45)
 
-    temps.append(temperature_f)
-    altis.append(alti_ft)
-    alti_ts.append(timestamp)
-
     return (alti_ft, temperature_f)
 
-accel_data = bytes()
-alti_data = bytes()
-chdir('data')
-for launch in scandir():
-    if DirEntry.is_file(launch):
-        continue
-    chdir(launch)
-    #TODO: Test with multidigit files, ie alti12.bin
+def read_raw_data_from_files() -> tuple[bytes, bytes]:
+    accel_data = bytes()
+    alti_data = bytes()
     for file in sorted(listdir()): 
         if file.startswith('accel'):
             with open(file, 'rb') as f:
@@ -115,84 +94,98 @@ for launch in scandir():
         if file.startswith('alti'):
             with open(file, 'rb') as f:
                 alti_data = f.read()
-    chdir('..')
+    return accel_data, alti_data
+
+def decode_raw_data(accel_data : bytes, alti_data : bytes) -> tuple[list, list, list, list, list, list, list]:
+    accel_timestamp = peekable(accel_timestamps())
+    alti_timestamp = peekable(alti_timestamps())
+    
     accel_idx = 0
     alti_idx = 0
     alti_idx_mod = 0 
-    accel_timestamp = peekable(accel_timestamps())
-    alti_timestamp = peekable(alti_timestamps())
 
-    xs.clear()
-    ys.clear()
-    zs.clear()
-    accel_ts.clear()
-    temps.clear()
-    altis.clear()
-    alti_ts.clear()
+    xs = []
+    ys = []
+    zs = []
+    accel_ts = []
+    temps = []
+    altis = []
+    alti_ts = []
 
     while accel_idx < len(accel_data)//6:
         alti_idx_start = alti_idx_mod + alti_idx * 7
         alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
             
         if (accel_timestamp.peek() < alti_timestamp.peek()) or (alti_idx_start >= len(alti_data)):
-            decode_accel_data(accel_data[accel_idx * 6 : (accel_idx + 1) * 6], next(accel_timestamp))
+            accel_ts.append(next(accel_timestamp))
+            [x.append(y) for x, y in zip([xs, ys, zs], decode_accel_reading(accel_data[accel_idx * 6 : (accel_idx + 1) * 6]))]
             accel_idx += 1
         else:
             if alti_idx_start >= len(alti_data):
                 continue
-            if alti_data[alti_idx_start] & 192 == 64: # Control frame 
+            # Control frame or Empty frame
+            if (alti_data[alti_idx_start] & 192 == 64) or (alti_data[alti_idx_start] & 255 == 128): 
                 alti_idx_mod += 2
                 continue
-            if alti_data[alti_idx_start] & 255 == 128: # Empty frame
-                alti_idx_mod += 2
-                continue
-            alti_ts_str = str(next(alti_timestamp))
-            decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str))
-            alti_idx += 1 
-    
+            alti_ts.append(next(alti_timestamp))
+            [x.append(y) for x, y in zip([altis, temps], decode_alti_reading(alti_data[alti_idx_start : alti_idx_end]))]
+            alti_idx += 1
+
+    return xs, ys, zs, accel_ts, temps, altis, alti_ts
+
+def write_bokeh_files(xs : list, ys : list, zs : list, accel_ts : list, temps : list, altis : list, alti_ts : list, launch_name : str) -> None:
     # apply theme to current document
     curdoc().theme = "dark_minimal"
 
-    output_file(filename="launch-" + launch.name + ".html", title="Launch " + launch.name + ": Acceleration and Altitude")
+    output_file(filename="launch-" + launch_name + ".html", title="Launch " + launch_name + ": Acceleration and Altitude")
 
     # create a new plot with a title and axis labels
     p = figure(
-        title="Acceleration and Altitude, Launch " + launch.name,
+        title="Acceleration and Altitude, Launch " + launch_name,
         sizing_mode="stretch_both",
         height=1000,
         width=1000,
-        x_axis_label="x",
-        y_axis_label="y")
+        y_range=(min(min(xs), min(ys), min(zs)),max(max(xs), max(ys), max(zs))),
+        x_axis_label="Time (seconds)",
+        y_axis_label="Acceleration (g)",
+        active_scroll="wheel_zoom")
+        
+    p.extra_y_ranges['altitude'] = Range1d(min(altis), max(altis))
+    ax2 = LinearAxis(
+        axis_label="Altitude (ft)",
+        y_range_name="altitude",
+    )
+    ax2.axis_label_text_color = "red"
+    p.add_layout(ax2, 'left')
+
+    p.extra_y_ranges['temperature'] = Range1d(min(temps), max(temps))
+    ax3 = LinearAxis(
+        axis_label="Temperature (f)",
+        y_range_name="temperature",
+    )
+    ax3.axis_label_text_color = "lightblue"
+    p.add_layout(ax3, 'right')
 
     # add a line renderer with legend and line thickness
-    p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="blue", line_width=2)
-    p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="red", line_width=2)
-    p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="green", line_width=2)
-    p.line(alti_ts, temps, legend_label="Temperature (f)", color="orange", line_width=2)
-    p.line(alti_ts, altis, legend_label="Altitude (ft)", color="purple", line_width=2)
+    p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="yellow", line_width=2)
+    p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="white", line_width=2)
+    p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="orange", line_width=2)
+    p.line(alti_ts, temps, legend_label="Temperature (f)", color="lightblue", line_width=2, y_range_name="temperature")
+    p.line(alti_ts, altis, legend_label="Altitude (ft)", color="red", line_width=2, y_range_name="altitude")
 
     save(p)
-    with open("launch-" + launch.name + ".json", "w") as json_file:
+    with open("launch-" + launch_name + ".json", "w") as json_file:
         dump(json_item(p, "accel-alti"), json_file)
 
-    # with open('launch'+launch.name+'.csv', 'wt') as f:
-    #     #f.write("acc_x, acc_y, acc_z, acc_temp_f, gyro_x, gyro_y, gyro_z, roll, pitch, alti_temp_f, alti_ft, humid_pct\n")
-    #     f.write("time, acc_x, acc_y, acc_z, altitude_ft, temp_f\n")
-    #     while accel_idx < len(accel_data)//6:
-    #         if accel_timestamp.peek() < alti_timestamp.peek():
-    #             f.write(','.join(str(x) for x in decode_accel_data(accel_data[accel_idx * 6 : (accel_idx + 1) * 6], next(accel_timestamp))) + "\n")
-    #             accel_idx += 1
-    #         else:
-    #             alti_idx_start = alti_idx_mod + alti_idx * 7
-    #             alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
-    #             if alti_data[alti_idx_start] & 192 == 64: # Control frame 
-    #                 alti_idx_mod += 2
-    #                 continue
-    #             if alti_data[alti_idx_start] & 255 == 128: # Empty frame
-    #                 alti_idx_mod += 2
-    #                 continue
-    #             alti_ts_str = str(next(alti_timestamp))
-    #             f.write(alti_ts_str + ', , , ,' + ','.join(str(x) for x in decode_alti_data(alti_data[alti_idx_start : alti_idx_end], float(alti_ts_str)))+ "\n")
-    #             alti_idx += 1            
+def main():
+    chdir('data')
+    for launch in scandir():
+        if DirEntry.is_file(launch):
+            continue
+        chdir(launch)
+        accel_data, alti_data = read_raw_data_from_files()
+        chdir('..')
+        xs, ys, zs, accel_ts, temps, altis, alti_ts = decode_raw_data(accel_data, alti_data)
+        write_bokeh_files(xs, ys, zs, accel_ts, temps, altis, alti_ts, launch.name)
 
-
+main()
