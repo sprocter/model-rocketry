@@ -9,10 +9,8 @@ import os
 import vfs
 
 # TODO:
-#   1. Continue investigating / working around occasional slow file I/O
-#   2. Sleep
-#       1. Light sleep until deep is proven necessary
-#       2. Add const option or USB power detection
+#   1. Cleanup
+#   2. Documentation pass
 
 ############################
 # Initialization / Startup #
@@ -31,7 +29,7 @@ _USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of... active
 _PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the 
 #                        # altimeter's FIFO buffer 😪
 
-_DURATION_MINS = const(1) # This will be approximated, unless period_ms divides 
+_DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
 
 _CURR_BARO_PRESSURE = const(1008) # Only used if the ESP32 is doing the math, 
@@ -41,7 +39,6 @@ _CURR_BARO_PRESSURE = const(1008) # Only used if the ESP32 is doing the math,
 
 # Timing #
 _DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
-_SLEEP_LAG_MS = const(100)
 
 # LED Control #
 _NEOPIXEL_BRIGHTNESS = const(1) # 1-255
@@ -84,6 +81,7 @@ _ACCEL_CONFIG = const(0x14) # Bank 2, pg 66
 _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
 
+# error_log = []
 
 ### Slow down the CPU ###
 machine.freq(40000000) # Significantly lowers power consumption, see table on 
@@ -302,6 +300,7 @@ def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
+    # error_log.append("\tAlti FIFO Count: " + str(fifo_count) + "\n")
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -309,6 +308,7 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
+    # error_log.append("\tAccel FIFO Count: " + str(fifo_count) + "\n")
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
 
@@ -331,12 +331,17 @@ def write_files(accel_mv : memoryview, alti_mv : memoryview, period : int) -> No
 def main_loop():
     accel_mv = memoryview(bytearray(4096)) # Shouldn't be larger than ~1500
     alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~450
-    for period in range(_DURATION_PERIODS):
+    for period in range(_DURATION_PERIODS + 1): # Add one because first period is just startup, not full duration
+        # error_log.append("Period " + str(period) + ":\n")
         start_ms = time.ticks_ms()
         
         accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
+        # fifo_ms = time.ticks_ms()
+        # fifo_time = time.ticks_diff(fifo_ms, start_ms)
+        # error_log.append("\tFIFO Read Time (ms): " + str(fifo_time) + "\n")
         write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes], period)
-        file_io_time = time.ticks_diff(time.ticks_ms(), start_ms)
+        # file_io_time = time.ticks_diff(time.ticks_ms(), fifo_ms)
+        # error_log.append("\tFile I/O Time (ms): " + str(file_io_time) + "\n")
 
         if shutdown_button.value() == 1:
             print("Got shutdown command. Quitting...")
@@ -346,14 +351,31 @@ def main_loop():
         neopixel.write()
         end_ms = time.ticks_ms()
         loop_time = time.ticks_diff(end_ms, start_ms)
-        print(period, ": File I/O time (ms): ", file_io_time)
+        # print(period, ": File I/O time (ms): ", file_io_time)
+        # error_log.append("\tLoop Time (ms): " + str(loop_time) + "\n")
+        # error_log.append("\n")
         # print("Loop time (ms): ", loop_time)
         if _USE_LIGHTSLEEP:
-            time.sleep_ms(_SLEEP_LAG_MS)
-            machine.lightsleep(max(0, (_PERIOD_MS - loop_time - _SLEEP_LAG_MS - _SLEEP_LAG_MS)))
-            time.sleep_ms(_SLEEP_LAG_MS)
+            machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
             time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
 
 coeffs_packed = init()
 main_loop()
+
+# try:
+#     os.stat('error_log.txt')
+#     with open('error_log.txt', 'rt') as f:
+#         for line in f.readlines():
+#             print(line, end='')
+#     os.remove('error_log.txt')
+# except:
+#     coeffs_packed = init()
+#     main_loop()
+
+#     os.chdir('..')
+#     os.chdir('..')
+#     if len(error_log) > 0:
+#         with open('error_log.txt', 'wt') as f:
+#             for line in error_log:
+#                 f.write(line)

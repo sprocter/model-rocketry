@@ -12,6 +12,7 @@ from bokeh.plotting import figure, output_file, save
 
 # TODO:
 #   1. Documentation pass
+#   2. Per-launch barometric pressure support?
 
 x_err = 0.029050755
 y_err = -0.008103238
@@ -116,13 +117,11 @@ def decode_raw_data(accel_data : bytes, alti_data : bytes) -> tuple[list, list, 
         alti_idx_start = alti_idx_mod + alti_idx * 7
         alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
             
-        if (accel_timestamp.peek() < alti_timestamp.peek()) or (alti_idx_start >= len(alti_data)):
+        if (accel_timestamp.peek() < alti_timestamp.peek()):
             accel_ts.append(next(accel_timestamp))
             [x.append(y) for x, y in zip([xs, ys, zs], decode_accel_reading(accel_data[accel_idx * 6 : (accel_idx + 1) * 6]))]
             accel_idx += 1
         else:
-            if alti_idx_start >= len(alti_data):
-                continue
             # Control frame or Empty frame
             if (alti_data[alti_idx_start] & 192 == 64) or (alti_data[alti_idx_start] & 255 == 128): 
                 alti_idx_mod += 2
