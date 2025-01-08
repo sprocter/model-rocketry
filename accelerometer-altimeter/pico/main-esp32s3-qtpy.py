@@ -8,10 +8,6 @@ import machine
 import os
 import vfs
 
-# TODO:
-#   1. Cleanup
-#   2. Documentation pass
-
 ############################
 # Initialization / Startup #
 ############################
@@ -21,7 +17,7 @@ import vfs
 # User-Modifiable #
 _RESET_DATA = const(False) # True to wipe all launch history
 
-_USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of... active 
+_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of... active 
 #                              # sleep? Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
@@ -32,16 +28,13 @@ _PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the
 _DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
 
-_CURR_BARO_PRESSURE = const(1008) # Only used if the ESP32 is doing the math, 
-#                                 # not used when it's acting as a datalogger
-
 ## Not User-Modifiable ##
 
 # Timing #
 _DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
 
 # LED Control #
-_NEOPIXEL_BRIGHTNESS = const(1) # 1-255
+_NEOPIXEL_BRIGHTNESS = const(3) # 1-255
 _NEOPIXEL_OFF = (0, 0, 0)
 #                                            # LED Meaning:
 _NEOPIXEL_RED = (_NEOPIXEL_BRIGHTNESS, 0, 0) # Initialization
@@ -51,7 +44,6 @@ _NEOPIXEL_BLU = (0, 0, _NEOPIXEL_BRIGHTNESS) # File I/O
 # Altimeter Registers #
 _ALTI_ADDR = const(0x77) # Default BMP290 I2C Addr: 119
 _CALIB_COEFFS = const(0x31) # pg 28
-_DATA_0 = const(0x04) # pg 32
 _ALTI_FIFO_LENGTH_0 = const(0x12) # pg 33
 _ALTI_FIFO_DATA = const(0x14) # pg 34
 _ALTI_FIFO_CONFIG_1 = const(0x17) # pg 34
@@ -81,12 +73,6 @@ _ACCEL_CONFIG = const(0x14) # Bank 2, pg 66
 _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
 
-# error_log = []
-
-### Slow down the CPU ###
-machine.freq(40000000) # Significantly lowers power consumption, see table on 
-#                        page 66 of the esp32 datasheet
-
 ### Set up Globals ###
 
 # Set up status LEDs #
@@ -103,7 +89,7 @@ shutdown_button = Signal(Pin(0, Pin.IN), invert = True)
 # Connect to sensors #
 i2c = I2C(1, scl=40, sda=41, freq=400000)
 
-def initialize_alti() -> bytearray:
+def initialize_alti() -> None:
     # Reset the device
     i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b'\xB6') 
     time.sleep_ms(5)
@@ -130,11 +116,6 @@ def initialize_alti() -> bytearray:
     # Clear FIFO now that we've messed with the settings
     i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b'\xB0') 
 
-    # Get calibration coefficients
-    coeffs_packed = bytearray(21)
-    i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
-    return coeffs_packed
-
 def initialize_accel():
     # Begin with Bank 0 configuration
     i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b'\x00')
@@ -143,10 +124,10 @@ def initialize_accel():
     i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x80') # 0b10000000
     time.sleep_ms(5)
     while i2c.readfrom_mem(_ACCEL_ADDR, _PWR_MGMT_1, 1) == 128:
-        print("waiting")
         time.sleep_ms(5)
 
-    # Turn low power off, temperature sensor off, use best available clock source
+    # Turn low power off, temperature sensor off, use best available clock 
+    # source
     i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x09') # 0b00001001
     time.sleep_ms(30) # Let the accelerometer wake up out of sleep
 
@@ -195,10 +176,36 @@ def initialize_accel():
     # Reset FIFO, step 2: De-assert
     i2c.writeto_mem(_ACCEL_ADDR, _FIFO_RST, b'\x00')
 
-    # Finally, set the LP_EN flag -- this prevents writing to most registers, so disable for further configuration.
+    # Finally, set the LP_EN flag -- this prevents writing to most registers, 
+    # so disable for further configuration.
     i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x29') # 0b00101001
 
-    # Expected power consumption: 120uA
+# Call to get the device-specific coefficients needed to decode altimeter data
+def print_packed_coeffs() -> None:
+    coeffs_packed = bytearray(21)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
+    print("_PACKED_COEFFS = \"", str(hex(int.from_bytes(coeffs_packed)))[2:], "\"")
+
+# Call to get the device-specific calibration values needed to correct 
+# accelerometer data
+def print_accel_calib_values() -> None:
+    xs, ys, zs = [], [], []
+    reading = bytearray(6)
+    print("Set the device face-up on a flat surface and hold it still.")
+    print("Calibration begins in five seconds.")
+    time.sleep(5)
+    print("Calibration beginning now, it will take 10 seconds...")
+    for _ in range(1000):
+        i2c.readfrom_mem_into(_ACCEL_ADDR, 0x2D, reading)
+        raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading)
+        xs.append(raw_accel_x / 1024)
+        ys.append(raw_accel_y / 1024)
+        zs.append(raw_accel_z / 1024)
+        time.sleep_ms(10)
+
+    print("_X_ERR = ", sum(xs) / len(xs))
+    print("_Y_ERR = ", sum(ys) / len(ys))
+    print("_Z_ERR = ", sum(zs) / len(zs) - 1)
 
 def initialize_filesystem() -> None:
     if _RESET_DATA:
@@ -218,69 +225,6 @@ def initialize_filesystem() -> None:
         os.mkdir(new_dir)
         os.chdir(new_dir)
 
-def print_alti_data(pressure_reading : memoryview, temp_reading : memoryview, coeffs_packed : bytearray):
-    coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
-    par_t1 = coeffs_unpacked[0] / (2 ** -8)
-    par_t2 = coeffs_unpacked[1] / (2 ** 30)
-    par_t3 = coeffs_unpacked[2] / (2 ** 48)
-
-    par_p1 = (coeffs_unpacked[3] - (2 ** 14))/(2 ** 20)
-    par_p2 = (coeffs_unpacked[4] - (2 ** 14))/(2 ** 29)
-    par_p3 = coeffs_unpacked[5]/(2 ** 32)
-    par_p4 = coeffs_unpacked[6]/(2 ** 37)
-    par_p5 = coeffs_unpacked[7]/(2 ** -3)
-    par_p6 = coeffs_unpacked[8]/(2 ** 6)
-    par_p7 = coeffs_unpacked[9]/(2 ** 8)
-    par_p8 = coeffs_unpacked[10]/(2 ** 15)
-    par_p9 = coeffs_unpacked[11]/(2 ** 48)
-    par_p10 = coeffs_unpacked[12]/(2 ** 48)
-    par_p11 = coeffs_unpacked[13]/(2 ** 65)
-
-    raw_pressure = pressure_reading[2] << 16 | pressure_reading[1] << 8 | pressure_reading[0]
-    raw_temp = temp_reading[2] << 16 | temp_reading[1] << 8 | temp_reading[0]
-
-    partial_data1 = raw_temp - par_t1
-    partial_data2 = partial_data1 * par_t2
-    temperature_c = partial_data2 + (partial_data1 ** 2) * par_t3
-    temperature_f = (temperature_c * 1.8) + 32
-
-    partial_data1 = par_p6 * temperature_c
-    partial_data2 = par_p7 * (temperature_c ** 2)
-    partial_data3 = par_p8 * (temperature_c ** 3)
-    partial_out1 = par_p5 + partial_data1 + partial_data2 + partial_data3
-
-    partial_data1 = par_p2 * temperature_c
-    partial_data2 = par_p3 * (temperature_c ** 2)
-    partial_data3 = par_p4 * (temperature_c ** 3)
-    partial_out2 = raw_pressure * (par_p1 + partial_data1 + partial_data2 + partial_data3)
-
-    partial_data1 = raw_pressure ** 2
-    partial_data2 = par_p9 + par_p10 * temperature_c
-    partial_data3 = partial_data1 * partial_data2
-    partial_data4 = partial_data3 + (raw_pressure ** 3) * par_p11
-
-    pressure_hpa = partial_out1 + partial_out2 + partial_data4
-    alti_ft = ((1-((float(pressure_hpa/100)/_CURR_BARO_PRESSURE) ** .190284)) * 145366.45)
-
-    print("Temperature (f): ", temperature_f)
-    print("Pressure (hPa): ", pressure_hpa)
-    print("Altitude (ft): ", alti_ft)
- 
-def print_accel_data(reading : memoryview):
-    # Accelerometer Calibration Values
-    _x_err = 0.029050755
-    _y_err = -0.008103238
-    _z_err = 0.044206185
-
-    raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading)
-    
-    # accelerometer "sensitivity scale factors" on page 13
-    accel_x = (raw_accel_x / 1024) - _x_err
-    accel_y = (raw_accel_y / 1024) - _y_err
-    accel_z = (raw_accel_z / 1024) - _z_err
-
-    print("Accel (x, y, z):", accel_x, accel_y, accel_z)
-
 def init():
     initialize_filesystem()
     coeffs_packed = initialize_alti()
@@ -290,17 +234,10 @@ def init():
     neopixel.write()
     return coeffs_packed
 
-def single_alti_reading(coeffs_packed : bytearray) -> None:
-    alti_data = bytearray(6)
-    alti_mv = memoryview(alti_data)
-    i2c.readfrom_mem_into(_ALTI_ADDR, _DATA_0, alti_mv)
-    print_alti_data(alti_mv[0:3], alti_mv[3:6], coeffs_packed)
-
 def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
-    # error_log.append("\tAlti FIFO Count: " + str(fifo_count) + "\n")
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -308,7 +245,6 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-    # error_log.append("\tAccel FIFO Count: " + str(fifo_count) + "\n")
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
 
@@ -319,7 +255,7 @@ def read_fifo(accel_mv : memoryview, alti_mv : memoryview) -> tuple[int, int]:
     alti_bytes = read_alti_fifo(alti_mv)
     return accel_bytes, alti_bytes
 
-def write_files(accel_mv : memoryview, alti_mv : memoryview, period : int) -> None:
+def write_files(accel_mv : memoryview, alti_mv : memoryview) -> None:
     neopixel[0] = _NEOPIXEL_BLU # type: ignore
     neopixel.write()
     gc.collect()
@@ -331,51 +267,24 @@ def write_files(accel_mv : memoryview, alti_mv : memoryview, period : int) -> No
 def main_loop():
     accel_mv = memoryview(bytearray(4096)) # Shouldn't be larger than ~1500
     alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~450
-    for period in range(_DURATION_PERIODS + 1): # Add one because first period is just startup, not full duration
-        # error_log.append("Period " + str(period) + ":\n")
+    for _ in range(_DURATION_PERIODS):
         start_ms = time.ticks_ms()
-        
         accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
-        # fifo_ms = time.ticks_ms()
-        # fifo_time = time.ticks_diff(fifo_ms, start_ms)
-        # error_log.append("\tFIFO Read Time (ms): " + str(fifo_time) + "\n")
-        write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes], period)
-        # file_io_time = time.ticks_diff(time.ticks_ms(), fifo_ms)
-        # error_log.append("\tFile I/O Time (ms): " + str(file_io_time) + "\n")
-
+        write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes])
+        
         if shutdown_button.value() == 1:
-            print("Got shutdown command. Quitting...")
             break
 
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
-        end_ms = time.ticks_ms()
-        loop_time = time.ticks_diff(end_ms, start_ms)
-        # print(period, ": File I/O time (ms): ", file_io_time)
-        # error_log.append("\tLoop Time (ms): " + str(loop_time) + "\n")
-        # error_log.append("\n")
-        # print("Loop time (ms): ", loop_time)
+        loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
+
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
             time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
 
-coeffs_packed = init()
-main_loop()
-
-# try:
-#     os.stat('error_log.txt')
-#     with open('error_log.txt', 'rt') as f:
-#         for line in f.readlines():
-#             print(line, end='')
-#     os.remove('error_log.txt')
-# except:
-#     coeffs_packed = init()
-#     main_loop()
-
-#     os.chdir('..')
-#     os.chdir('..')
-#     if len(error_log) > 0:
-#         with open('error_log.txt', 'wt') as f:
-#             for line in error_log:
-#                 f.write(line)
+# This lets us skip running the code (so we can drop into REPL / get the files)
+if shutdown_button.value() == 0:
+    coeffs_packed = init()
+    main_loop()

@@ -2,6 +2,7 @@ from io import open
 from json import dump
 from os import chdir, scandir, listdir, DirEntry
 from struct import unpack
+from decimal import Decimal
 
 from more_itertools import peekable
 
@@ -10,36 +11,41 @@ from bokeh.io import curdoc
 from bokeh.models import LinearAxis, Range1d
 from bokeh.plotting import figure, output_file, save
 
-# TODO:
-#   1. Documentation pass
-#   2. Per-launch barometric pressure support?
+# To get these values, call `print_accel_calib_values` on the pico python file 
+# when it's connected to the ICM 20649
+_X_ERR = 0.029050755
+_Y_ERR = -0.008103238
+_Z_ERR = 0.044206185
 
-x_err = 0.029050755
-y_err = -0.008103238
-z_err = 0.044206185
-_CURR_BARO_PRESSURE = 1033
+# This value has to be retrieved from your favorite weather app and written 
+# down at the time and location of the launch
+_CURR_BARO_PRESSURE = 1023
 
-def accel_timestamps():
-    cur_timestamp = 0
+# To get this string, call `print_packed_coeffs` on the pico python file when
+# it's connected to the BMP290
+_PACKED_COEFFS = "996e384df93a1a52140601684e9d6003fabd0f05f5" 
+
+def accel_timestamps() -> float:
+    cur_timestamp = Decimal(0)
     while True:
-        yield cur_timestamp
-        cur_timestamp += 1/(1125/11)
+        yield float(cur_timestamp.quantize(Decimal('0.0001')))
+        cur_timestamp += Decimal(1)/(Decimal(1125)/Decimal(11))
 
-def alti_timestamps():
-    cur_timestamp = 0
+def alti_timestamps() -> float:
+    cur_timestamp = Decimal(0)
     while True:
-        yield cur_timestamp
-        cur_timestamp += .04
+        yield float(cur_timestamp.quantize(Decimal('0.0001')))
+        cur_timestamp += Decimal(.04)
 
 def decode_accel_reading(accel_reading : bytes) -> tuple[float, float, float]:
     raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", accel_reading)
-    accel_x = (raw_accel_x / 1024) - x_err
-    accel_y = (raw_accel_y / 1024) - y_err
-    accel_z = (raw_accel_z / 1024) - z_err
+    accel_x = (raw_accel_x / 1024) - _X_ERR
+    accel_y = (raw_accel_y / 1024) - _Y_ERR
+    accel_z = (raw_accel_z / 1024) - _Z_ERR
     return (accel_x, accel_y, accel_z)
 
 def decode_alti_reading(alti_reading : bytes) -> tuple[float, float]:
-    coeffs_packed = bytes.fromhex("996e384df93a1a52140601684e9d6003fabd0f05f5")
+    coeffs_packed = bytes.fromhex(_PACKED_COEFFS)
     coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", coeffs_packed)
     par_t1 = coeffs_unpacked[0] / (2 ** -8)
     par_t2 = coeffs_unpacked[1] / (2 ** 30)
@@ -122,7 +128,7 @@ def decode_raw_data(accel_data : bytes, alti_data : bytes) -> tuple[list, list, 
             [x.append(y) for x, y in zip([xs, ys, zs], decode_accel_reading(accel_data[accel_idx * 6 : (accel_idx + 1) * 6]))]
             accel_idx += 1
         else:
-            # Control frame or Empty frame
+            # Check for Control frame or Empty frame
             if (alti_data[alti_idx_start] & 192 == 64) or (alti_data[alti_idx_start] & 255 == 128): 
                 alti_idx_mod += 2
                 continue
