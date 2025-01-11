@@ -25,13 +25,13 @@ _CURR_BARO_PRESSURE = 1023
 # it's connected to the BMP290
 _PACKED_COEFFS = "996e384df93a1a52140601684e9d6003fabd0f05f5" 
 
-def accel_timestamps() -> float:
+def accel_timestamps():
     cur_timestamp = Decimal(0)
     while True:
         yield float(cur_timestamp.quantize(Decimal('0.0001')))
         cur_timestamp += Decimal(1)/(Decimal(1125)/Decimal(11))
 
-def alti_timestamps() -> float:
+def alti_timestamps():
     cur_timestamp = Decimal(0)
     while True:
         yield float(cur_timestamp.quantize(Decimal('0.0001')))
@@ -155,7 +155,7 @@ def write_bokeh_files(xs : list, ys : list, zs : list, accel_ts : list, temps : 
         y_axis_label="Acceleration (g)",
         active_scroll="wheel_zoom")
         
-    p.extra_y_ranges['altitude'] = Range1d(min(altis), max(altis))
+    p.extra_y_ranges['altitude'] = Range1d(min(altis), max(altis)) # type: ignore
     ax2 = LinearAxis(
         axis_label="Altitude (ft)",
         y_range_name="altitude",
@@ -163,7 +163,7 @@ def write_bokeh_files(xs : list, ys : list, zs : list, accel_ts : list, temps : 
     ax2.axis_label_text_color = "red"
     p.add_layout(ax2, 'left')
 
-    p.extra_y_ranges['temperature'] = Range1d(min(temps), max(temps))
+    p.extra_y_ranges['temperature'] = Range1d(min(temps), max(temps)) # type: ignore
     ax3 = LinearAxis(
         axis_label="Temperature (f)",
         y_range_name="temperature",
@@ -172,15 +172,15 @@ def write_bokeh_files(xs : list, ys : list, zs : list, accel_ts : list, temps : 
     p.add_layout(ax3, 'right')
 
     # add a line renderer with legend and line thickness
-    p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="yellow", line_width=2)
-    p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="white", line_width=2)
-    p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="orange", line_width=2)
-    p.line(alti_ts, temps, legend_label="Temperature (f)", color="lightblue", line_width=2, y_range_name="temperature")
-    p.line(alti_ts, altis, legend_label="Altitude (ft)", color="red", line_width=2, y_range_name="altitude")
+    p.line(accel_ts, xs, legend_label="Acceleration (g): X", color="yellow", line_width=2) # type: ignore
+    p.line(accel_ts, ys, legend_label="Acceleration (g): Y", color="white", line_width=2) # type: ignore
+    p.line(accel_ts, zs, legend_label="Acceleration (g): Z", color="orange", line_width=2) # type: ignore
+    p.line(alti_ts, temps, legend_label="Temperature (f)", color="lightblue", line_width=2, y_range_name="temperature") # type: ignore
+    p.line(alti_ts, altis, legend_label="Altitude (ft)", color="red", line_width=2, y_range_name="altitude") # type: ignore
 
     save(p)
     with open("launch-" + launch_name + ".json", "w") as json_file:
-        dump(json_item(p, "accel-alti"), json_file)
+        dump(json_item(p, "accel-alti"), json_file) # type: ignore
 
 def main():
     chdir('data')
