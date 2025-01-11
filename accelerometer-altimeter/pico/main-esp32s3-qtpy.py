@@ -2,11 +2,7 @@ from machine import Pin, Signal, I2C
 from micropython import const
 from struct import unpack
 from neopixel import NeoPixel
-import time
-import gc
-import machine
-import os
-import vfs
+import time, gc, machine, os, vfs
 
 ############################
 # Initialization / Startup #
@@ -17,20 +13,20 @@ import vfs
 # User-Modifiable #
 _RESET_DATA = const(False) # True to wipe all launch history
 
-_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of... active 
-#                              # sleep? Note that setting this to True will
+_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
+#                              # time.sleep. Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
 
-_PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the 
-#                        # altimeter's FIFO buffer 😪
-
-_DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
+_DURATION_MINS = const(5) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
 
 ## Not User-Modifiable ##
 
 # Timing #
+
+_PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the 
+#                        # altimeter's FIFO buffer 😪
 _DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
 
 # LED Control #
@@ -88,6 +84,33 @@ shutdown_button = Signal(Pin(0, Pin.IN), invert = True)
 
 # Connect to sensors #
 i2c = I2C(1, scl=40, sda=41, freq=400000)
+
+# Call to get the device-specific coefficients needed to decode altimeter data
+def print_packed_coeffs() -> None:
+    coeffs_packed = bytearray(21)
+    i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
+    print("_PACKED_COEFFS = \"", str(hex(int.from_bytes(coeffs_packed)))[2:], "\"")
+
+# Call to get the device-specific calibration values needed to correct 
+# accelerometer data
+def print_accel_calib_values() -> None:
+    xs, ys, zs = [], [], []
+    reading = bytearray(6)
+    print("Set the device face-up on a flat surface and hold it still.")
+    print("Calibration begins in five seconds.")
+    time.sleep(5)
+    print("Calibration beginning now, it will take 10 seconds...")
+    for _ in range(1000):
+        i2c.readfrom_mem_into(_ACCEL_ADDR, 0x2D, reading)
+        raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading)
+        xs.append(raw_accel_x / 1024)
+        ys.append(raw_accel_y / 1024)
+        zs.append(raw_accel_z / 1024)
+        time.sleep_ms(10)
+
+    print("_X_ERR = ", sum(xs) / len(xs))
+    print("_Y_ERR = ", sum(ys) / len(ys))
+    print("_Z_ERR = ", sum(zs) / len(zs) - 1)
 
 def initialize_alti() -> None:
     # Reset the device
@@ -180,39 +203,12 @@ def initialize_accel():
     # so disable for further configuration.
     i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x29') # 0b00101001
 
-# Call to get the device-specific coefficients needed to decode altimeter data
-def print_packed_coeffs() -> None:
-    coeffs_packed = bytearray(21)
-    i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
-    print("_PACKED_COEFFS = \"", str(hex(int.from_bytes(coeffs_packed)))[2:], "\"")
-
-# Call to get the device-specific calibration values needed to correct 
-# accelerometer data
-def print_accel_calib_values() -> None:
-    xs, ys, zs = [], [], []
-    reading = bytearray(6)
-    print("Set the device face-up on a flat surface and hold it still.")
-    print("Calibration begins in five seconds.")
-    time.sleep(5)
-    print("Calibration beginning now, it will take 10 seconds...")
-    for _ in range(1000):
-        i2c.readfrom_mem_into(_ACCEL_ADDR, 0x2D, reading)
-        raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", reading)
-        xs.append(raw_accel_x / 1024)
-        ys.append(raw_accel_y / 1024)
-        zs.append(raw_accel_z / 1024)
-        time.sleep_ms(10)
-
-    print("_X_ERR = ", sum(xs) / len(xs))
-    print("_Y_ERR = ", sum(ys) / len(ys))
-    print("_Z_ERR = ", sum(zs) / len(zs) - 1)
-
 def initialize_filesystem() -> None:
     if _RESET_DATA:
         # Wipe all existing data
         vfs.umount('/')
-        vfs.VfsLfs2.mkfs(bdev)
-        vfs.mount(bdev, '/')
+        vfs.VfsLfs2.mkfs(bdev) # type: ignore
+        vfs.mount(bdev, '/') # type: ignore
         os.mkdir("data")
         os.chdir("data")
         os.mkdir("1")
@@ -273,7 +269,9 @@ def main_loop():
         write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes])
         
         if shutdown_button.value() == 1:
-            break
+            # Things keep running if the shutdown button is pushed -- the 
+            # device only turns off if it runs the full duration
+            return 
 
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
@@ -283,6 +281,24 @@ def main_loop():
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
             time.sleep_ms(max(0, (_PERIOD_MS - loop_time)))
+
+    if _USE_LIGHTSLEEP:
+        # Lightsleep is used when on battery power.
+        # Since we're on battery power, and we've run for the full duration, we 
+        # should try and save power further -- this is as close as we can get
+        # to shutting everything off
+
+        # Set altimeter to sleep mode, turn off pressure and temperature sensors
+        i2c.writeto_mem(_ALTI_ADDR, _ALTI_PWR_CTRL, b'\x00') # RR00RR00
+        # Turn low power on and temperature sensor off, stop clock
+        i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x6F') # 0b01101111
+        # Turn off the gyroscope and accelerometer
+        i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_2, b'\x3F') # 0b00111111
+        
+        time.sleep_ms(10) # Give things a chance to settle
+    
+        machine.deepsleep()
+
 
 # This lets us skip running the code (so we can drop into REPL / get the files)
 if shutdown_button.value() == 0:
