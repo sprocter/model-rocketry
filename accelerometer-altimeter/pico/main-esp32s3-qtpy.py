@@ -223,12 +223,11 @@ def initialize_filesystem() -> None:
 
 def init():
     initialize_filesystem()
-    coeffs_packed = initialize_alti()
+    initialize_alti()
     initialize_accel()
     gc.collect()
     neopixel[0] = _NEOPIXEL_OFF # type: ignore
     neopixel.write()
-    return coeffs_packed
 
 def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
@@ -302,5 +301,5 @@ def main_loop():
 
 # This lets us skip running the code (so we can drop into REPL / get the files)
 if shutdown_button.value() == 0:
-    coeffs_packed = init()
+    init()
     main_loop()
