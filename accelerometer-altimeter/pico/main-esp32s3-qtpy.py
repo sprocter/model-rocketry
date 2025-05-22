@@ -10,15 +10,15 @@ import time, gc, machine, os, vfs
 
 ### Constants ###
 
-# User-Modifiable #
+## User-Modifiable ##
 _RESET_DATA = const(False) # True to wipe all launch history
 
-_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
+_USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
 
-_DURATION_MINS = const(5) # This will be approximated, unless period_ms divides 
+_DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
 
 ## Not User-Modifiable ##
@@ -82,7 +82,7 @@ neopixel.write()
 # Set up save / shutdown button #
 shutdown_button = Signal(Pin(0, Pin.IN), invert = True)
 
-# Connect to sensors #
+### Connect to sensors ###
 i2c = I2C(1, scl=40, sda=41, freq=400000)
 
 # Call to get the device-specific coefficients needed to decode altimeter data
