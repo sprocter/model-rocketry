@@ -11,15 +11,19 @@ import time, gc, machine, os, vfs
 ### Constants ###
 
 ## User-Modifiable ##
-_RESET_DATA = const(False) # True to wipe all launch history
+_RESET_DATA = const(True) # True to wipe all launch history
 
-_USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of just
+_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
 
 _DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
+
+_LOW_POWER = const(False) # Clocks the CPU way down and puts the accelerometer
+#                         # into a lower-power mode. Saves ~1mA, if my math is 
+#                         # right 
 
 ## Not User-Modifiable ##
 
@@ -68,6 +72,10 @@ _ACCEL_SMPLRT_DIV_2 = const(0x11) # Bank 2, pg 65
 _ACCEL_CONFIG = const(0x14) # Bank 2, pg 66
 _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
+
+_X_ERR = const(0.029050755)
+_Y_ERR = const(-0.008103238)
+_Z_ERR = const(0.044206185)
 
 ### Set up Globals ###
 
@@ -139,7 +147,7 @@ def initialize_alti() -> None:
     # Clear FIFO now that we've messed with the settings
     i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b'\xB0') 
 
-def initialize_accel():
+def initialize_accel() -> None:
     # Begin with Bank 0 configuration
     i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b'\x00')
 
@@ -163,8 +171,9 @@ def initialize_accel():
     # Now on to Bank 2 configuration
     i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b'\x20') # 0b00100000
     
-    # Enable ODR start-time alignment
-    i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b'\x01')
+    if _LOW_POWER:
+        # Enable ODR start-time alignment
+        i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b'\x01')
 
     # Sample rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.273
     # Split across two bytes, 12 bits
@@ -176,17 +185,22 @@ def initialize_accel():
     # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, b'\x3F') # 0b00111111
 
-    # Average 4 samples (would be 1, but we're using the DLPF)
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG_2, b'\x00') # 0b0000000
+    if _LOW_POWER:
+        # Average 4 samples (would be 1, but we're using the DLPF)
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG_2, b'\x00') # 0b0000000
 
-    # Disable DMP in LP Accelerometer mode
-    i2c.writeto_mem(_ACCEL_ADDR, _MOD_CTRL_USR, b'\x02')
+        # Disable DMP in LP Accelerometer mode
+        i2c.writeto_mem(_ACCEL_ADDR, _MOD_CTRL_USR, b'\x02')
 
     # Back to Bank 0
     i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL,  b'\x00')
 
-    # Operate accelerometer in duty cycled mode
-    i2c.writeto_mem(_ACCEL_ADDR, _LP_CONFIG, b'\x20') # 0b00100000
+    if _LOW_POWER:
+        # Operate accelerometer in duty cycled mode
+        i2c.writeto_mem(_ACCEL_ADDR, _LP_CONFIG, b'\x20') # 0b00100000
+    else:
+        # Operate accelerometer (and everything else) in low-noise mode
+        i2c.writeto_mem(_ACCEL_ADDR, _LP_CONFIG, b'\x00') # 0b00000000
 
     # Turn FIFO on for accelerometer data
     i2c.writeto_mem(_ACCEL_ADDR, _FIFO_EN_2, b'\x10') # 0b00010000
@@ -194,14 +208,15 @@ def initialize_accel():
     # Set FIFO to replace old data when full. Inshallah this won't happen
     i2c.writeto_mem(_ACCEL_ADDR, _FIFO_MODE, b'\x00')
 
-    # Reset FIFO, step 1: Assert (Set FIFO size to zero)
-    i2c.writeto_mem(_ACCEL_ADDR, _FIFO_RST, b'\x01')
-    # Reset FIFO, step 2: De-assert
-    i2c.writeto_mem(_ACCEL_ADDR, _FIFO_RST, b'\x00')
+    if _LOW_POWER:
+        # Reset FIFO, step 1: Assert (Set FIFO size to zero)
+        i2c.writeto_mem(_ACCEL_ADDR, _FIFO_RST, b'\x01')
+        # Reset FIFO, step 2: De-assert
+        i2c.writeto_mem(_ACCEL_ADDR, _FIFO_RST, b'\x00')
 
-    # Finally, set the LP_EN flag -- this prevents writing to most registers, 
-    # so disable for further configuration.
-    i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x29') # 0b00101001
+        # Finally, set the LP_EN flag -- this prevents writing to most 
+        # registers, so disable for further configuration.
+        i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b'\x29') # 0b00101001
 
 def initialize_filesystem() -> None:
     if _RESET_DATA:
@@ -221,7 +236,9 @@ def initialize_filesystem() -> None:
         os.mkdir(new_dir)
         os.chdir(new_dir)
 
-def init():
+def init() -> None:
+    if _LOW_POWER:
+        machine.freq(40000000)
     initialize_filesystem()
     initialize_alti()
     initialize_accel()
@@ -233,14 +250,23 @@ def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
+    print(fifo_count)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
+
+def decode_accel_reading(accel_reading : bytes) -> tuple[float, float, float]:
+    raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", accel_reading)
+    accel_x = (raw_accel_x / 1024) - _X_ERR
+    accel_y = (raw_accel_y / 1024) - _Y_ERR
+    accel_z = (raw_accel_z / 1024) - _Z_ERR
+    return (accel_x, accel_y, accel_z)
 
 def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-    i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
+    if fifo_count > 0:
+        i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
 
 def read_fifo(accel_mv : memoryview, alti_mv : memoryview) -> tuple[int, int]:
@@ -259,9 +285,9 @@ def write_files(accel_mv : memoryview, alti_mv : memoryview) -> None:
     with open('alti.bin', 'ab') as f:
         f.write(alti_mv)
 
-def main_loop():
-    accel_mv = memoryview(bytearray(4096)) # Shouldn't be larger than ~1500
-    alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~450
+def main_loop() -> None:
+    accel_mv = memoryview(bytearray(2048)) # Shouldn't be larger than ~1640
+    alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~490
     for _ in range(_DURATION_PERIODS):
         start_ms = time.ticks_ms()
         accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
@@ -275,7 +301,6 @@ def main_loop():
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
-
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
