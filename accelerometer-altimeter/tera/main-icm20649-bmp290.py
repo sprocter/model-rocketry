@@ -22,17 +22,17 @@ _Z_ERR = 0.044206185
 
 # This value has to be retrieved from your favorite weather app and written 
 # down at the time and location of the launch
-_CURR_BARO_PRESSURE = 1018
+_CURR_BARO_PRESSURE = 1020
 
 # To get this string, call `print_packed_coeffs` on the pico python file when
 # it's connected to the BMP290
 _PACKED_COEFFS = "996e384df93a1a52140601684e9d6003fabd0f05f5" 
 
 # X in 1125/(1+X), which gives the accelerometer's sample rate in Hz
-_ACCEL_SAMPLERATE_NUM = 10 
+_ACCEL_SAMPLERATE_NUM = 2 
 
 # The altimeter's sample rate in Hz
-_ALTI_SAMPLERATE_HZ = 25
+_ALTI_SAMPLERATE_HZ = 50
 
 
 def accel_timestamps():

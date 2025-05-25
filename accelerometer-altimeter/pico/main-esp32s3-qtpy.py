@@ -11,15 +11,18 @@ import time, gc, machine, os, vfs
 ### Constants ###
 
 ## User-Modifiable ##
-_RESET_DATA = const(True) # True to wipe all launch history
+_RESET_DATA = const(False) # True to wipe all launch history
 
 _USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
 
-_DURATION_MINS = const(6) # This will be approximated, unless period_ms divides 
+_DURATION_MINS = const(5) # This will be approximated, unless period_ms divides 
 #                         # evenly into the duration
+
+_RESOLUTION = const(1) # 1-3. Higher = more sensor readings, current draw, and 
+                       # disk usage
 
 _LOW_POWER = const(False) # Clocks the CPU way down and puts the accelerometer
 #                         # into a lower-power mode. Saves ~1mA, if my math is 
@@ -27,11 +30,39 @@ _LOW_POWER = const(False) # Clocks the CPU way down and puts the accelerometer
 
 ## Not User-Modifiable ##
 
+# Resolution #
+if _RESOLUTION == 1:
+    # Temperature 2 (001), Pressure 16 (100)
+    _ALTI_OVERSAMPLE = b'\x0C'
+    # 25 Hz / 40ms sampling period
+    _ALTI_DATARATE = b'\x03'
+    # rate = 4, rate_hz = 1125/(1 + rate) = 1125/5 = 225
+    _ACCEL_SAMPLERATE = b'\x04'
+    _PERIOD_MS = 2800
+    _CPU_FREQUENCY = 40000000
+if _RESOLUTION == 2:
+    # Temperature 1 (000), Pressure 8 (011)
+    _ALTI_OVERSAMPLE = b'\x03'
+    # 50 Hz / 20ms sampling period
+    _ALTI_DATARATE = b'\x02'
+    # rate = 2, rate_hz = 1125/(1 + rate) = 1125/3 = 375
+    _ACCEL_SAMPLERATE = b'\x02'
+    _PERIOD_MS = 1400
+    _CPU_FREQUENCY = 80000000
+elif _RESOLUTION == 3:
+    # Temperature 1 (000), Pressure 2 (001)
+    _ALTI_OVERSAMPLE = b'\x01'
+    # 100 Hz / 10ms sampling period
+    _ALTI_DATARATE = b'\x01'
+    # rate = 1, rate_hz = 1125/(1 + rate) = 1125/2 = 562.5
+    _ACCEL_SAMPLERATE = b'\x01'
+    _PERIOD_MS = 700
+    _CPU_FREQUENCY = 160000000
+
+
 # Timing #
 
-_PERIOD_MS = const(2727) # Much higher than this and we risk overflowing the 
-#                        # altimeter's FIFO buffer 😪
-_DURATION_PERIODS = const(((_DURATION_MINS * 60) * 1000) // _PERIOD_MS)
+_DURATION_PERIODS = ((_DURATION_MINS * 60) * 1000) // _PERIOD_MS
 
 # LED Control #
 _NEOPIXEL_BRIGHTNESS = const(3) # 1-255
@@ -42,7 +73,7 @@ _NEOPIXEL_GRN = (0, _NEOPIXEL_BRIGHTNESS, 0) # Reading FIFO buffers
 _NEOPIXEL_BLU = (0, 0, _NEOPIXEL_BRIGHTNESS) # File I/O
 
 # Altimeter Registers #
-_ALTI_ADDR = const(0x77) # Default BMP290 I2C Addr: 119
+_ALTI_ADDR = const(0x77) # Default BMP390 I2C Addr: 119
 _CALIB_COEFFS = const(0x31) # pg 28
 _ALTI_FIFO_LENGTH_0 = const(0x12) # pg 33
 _ALTI_FIFO_DATA = const(0x14) # pg 34
@@ -74,7 +105,7 @@ _ACCEL_CONFIG_2 = const(0x15) # Bank 2, pg 67
 _MOD_CTRL_USR = const(0x54) # Bank 2, pg 70
 
 _X_ERR = const(0.029050755)
-_Y_ERR = const(-0.008103238)
+_Y_ERR = -0.008103238 # Micropython constants can't be negative???
 _Z_ERR = const(0.044206185)
 
 ### Set up Globals ###
@@ -135,13 +166,13 @@ def initialize_alti() -> None:
     # Store filtered data, don't downsample
     i2c.writeto_mem(_ALTI_ADDR, _ALTI_FIFO_CONFIG_2, b'\x08')  # RRR01000
 
-    # Oversampling: Temperature 1 (000), Pressure 8 (011)
-    i2c.writeto_mem(_ALTI_ADDR, _ALTI_OSR, b'\x03')  # RR000011
+    # Oversampling: See Resolution section of constants
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_OSR, _ALTI_OVERSAMPLE)  # RR000001
 
-    # Data rate: 25 Hz / 40ms sampling period
-    i2c.writeto_mem(_ALTI_ADDR, _ALTI_ODR, b'\x03')  # RRR00011
+    # Data rate: See Resolution section of constants
+    i2c.writeto_mem(_ALTI_ADDR, _ALTI_ODR, _ALTI_DATARATE)  # RRR00001
 
-    # IIR Filter: 3 (010)
+    # IIR Filter: 2 (010R)
     i2c.writeto_mem(_ALTI_ADDR, _ALTI_CONFIG, b'\x04') # RRR010R
 
     # Clear FIFO now that we've messed with the settings
@@ -175,12 +206,12 @@ def initialize_accel() -> None:
         # Enable ODR start-time alignment
         i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b'\x01')
 
-    # Sample rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.273
+    # Sample rate: See Resolution section of Constants
     # Split across two bytes, 12 bits
     # MSB, 0b00000000
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b'\x00') 
-    # LSB, 0b00001010
-    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, b'\x0A')
+    # LSB, 0b00000001
+    i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, _ACCEL_SAMPLERATE)
     
     # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, b'\x3F') # 0b00111111
@@ -237,8 +268,7 @@ def initialize_filesystem() -> None:
         os.chdir(new_dir)
 
 def init() -> None:
-    if _LOW_POWER:
-        machine.freq(40000000)
+    machine.freq(_CPU_FREQUENCY)
     initialize_filesystem()
     initialize_alti()
     initialize_accel()
@@ -250,7 +280,7 @@ def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
-    print(fifo_count)
+    # print("Alti FIFO: ", fifo_count)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -265,6 +295,7 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
+    # print("Accel FIFO: ", fifo_count)
     if fifo_count > 0:
         i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
@@ -286,8 +317,9 @@ def write_files(accel_mv : memoryview, alti_mv : memoryview) -> None:
         f.write(alti_mv)
 
 def main_loop() -> None:
-    accel_mv = memoryview(bytearray(2048)) # Shouldn't be larger than ~1640
-    alti_mv = memoryview(bytearray(512)) # Shouldn't be larger than ~490
+    # Initialize buffers to the size of the sensors' FIFOs
+    accel_mv = memoryview(bytearray(4096))
+    alti_mv = memoryview(bytearray(512))
     for _ in range(_DURATION_PERIODS):
         start_ms = time.ticks_ms()
         accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
@@ -301,6 +333,8 @@ def main_loop() -> None:
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
+        # print("\tLoop Time: ", loop_time)
+        print(loop_time)
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
