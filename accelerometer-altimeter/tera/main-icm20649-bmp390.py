@@ -29,10 +29,10 @@ _CURR_BARO_PRESSURE = 1020
 _PACKED_COEFFS = "996e384df93a1a52140601684e9d6003fabd0f05f5" 
 
 # X in 1125/(1+X), which gives the accelerometer's sample rate in Hz
-_ACCEL_SAMPLERATE_NUM = 2 
+_ACCEL_SAMPLERATE_NUM = 10
 
 # The altimeter's sample rate in Hz
-_ALTI_SAMPLERATE_HZ = 50
+_ALTI_SAMPLERATE_HZ = 25
 
 
 def accel_timestamps():

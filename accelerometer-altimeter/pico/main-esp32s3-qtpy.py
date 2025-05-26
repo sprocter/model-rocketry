@@ -24,22 +24,19 @@ _DURATION_MINS = const(5) # This will be approximated, unless period_ms divides
 _RESOLUTION = const(1) # 1-3. Higher = more sensor readings, current draw, and 
                        # disk usage
 
-_LOW_POWER = const(False) # Clocks the CPU way down and puts the accelerometer
-#                         # into a lower-power mode. Saves ~1mA, if my math is 
-#                         # right 
-
 ## Not User-Modifiable ##
 
 # Resolution #
 if _RESOLUTION == 1:
-    # Temperature 2 (001), Pressure 16 (100)
-    _ALTI_OVERSAMPLE = b'\x0C'
+    # Temperature 1 (001), Pressure 8 (100)
+    _ALTI_OVERSAMPLE = b'\x03'
     # 25 Hz / 40ms sampling period
     _ALTI_DATARATE = b'\x03'
-    # rate = 4, rate_hz = 1125/(1 + rate) = 1125/5 = 225
-    _ACCEL_SAMPLERATE = b'\x04'
+    # rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.27Hz
+    _ACCEL_SAMPLERATE = b'\x0A'
     _PERIOD_MS = 2800
     _CPU_FREQUENCY = 40000000
+    _LOW_POWER = True
 if _RESOLUTION == 2:
     # Temperature 1 (000), Pressure 8 (011)
     _ALTI_OVERSAMPLE = b'\x03'
@@ -49,6 +46,7 @@ if _RESOLUTION == 2:
     _ACCEL_SAMPLERATE = b'\x02'
     _PERIOD_MS = 1400
     _CPU_FREQUENCY = 80000000
+    _LOW_POWER = False
 elif _RESOLUTION == 3:
     # Temperature 1 (000), Pressure 2 (001)
     _ALTI_OVERSAMPLE = b'\x01'
@@ -58,6 +56,7 @@ elif _RESOLUTION == 3:
     _ACCEL_SAMPLERATE = b'\x01'
     _PERIOD_MS = 700
     _CPU_FREQUENCY = 160000000
+    _LOW_POWER = False
 
 
 # Timing #
@@ -208,9 +207,7 @@ def initialize_accel() -> None:
 
     # Sample rate: See Resolution section of Constants
     # Split across two bytes, 12 bits
-    # MSB, 0b00000000
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b'\x00') 
-    # LSB, 0b00000001
     i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, _ACCEL_SAMPLERATE)
     
     # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
@@ -280,7 +277,7 @@ def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
-    # print("Alti FIFO: ", fifo_count)
+    print("Alti FIFO: ", fifo_count)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -295,7 +292,7 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-    # print("Accel FIFO: ", fifo_count)
+    print("Accel FIFO: ", fifo_count)
     if fifo_count > 0:
         i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
@@ -333,8 +330,8 @@ def main_loop() -> None:
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
-        # print("\tLoop Time: ", loop_time)
-        print(loop_time)
+        print("\tLoop Time: ", loop_time)
+        # print(loop_time)
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
