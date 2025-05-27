@@ -1,13 +1,7 @@
 from io import open
 from json import dump
 from os import chdir, scandir, listdir, DirEntry
-from struct import unpack
-from decimal import Decimal
-from itertools import pairwise
-from math import sqrt
-from typing import Generator
 
-from more_itertools import peekable
 from whittaker_eilers import WhittakerSmoother # See https://towardsdatascience.com/the-perfect-way-to-smooth-your-noisy-data-4f3fe6b44440/
 
 from bokeh.embed import json_item
@@ -16,6 +10,7 @@ from bokeh.models import LinearAxis, Range1d
 from bokeh.plotting import figure, output_file, save
 
 from bmp390 import BMP390
+from icm20649 import ICM20649
 
 # To get these values, call `print_accel_calib_values` on the pico python file 
 # when it's connected to the ICM 20649
@@ -37,20 +32,6 @@ _ACCEL_SAMPLERATE_NUM = 10
 # The altimeter's sample rate in Hz
 _ALTI_SAMPLERATE_HZ = 25
 
-
-def accel_timestamps() -> Generator[float]:
-    cur_timestamp = Decimal(0)
-    while True:
-        yield float(cur_timestamp.quantize(Decimal('0.0001')))
-        cur_timestamp += Decimal(1)/(Decimal(1125)/Decimal(1 + _ACCEL_SAMPLERATE_NUM))
-
-def decode_accel_reading(accel_reading : bytes) -> tuple[float, float, float]:
-    raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", accel_reading)
-    accel_x = (raw_accel_x / 1024) - _X_ERR
-    accel_y = (raw_accel_y / 1024) - _Y_ERR
-    accel_z = (raw_accel_z / 1024) - _Z_ERR
-    return (accel_x, accel_y, accel_z)
-
 def read_raw_data_from_files() -> tuple[bytes, bytes]:
     accel_data = bytes()
     alti_data = bytes()
@@ -63,25 +44,23 @@ def read_raw_data_from_files() -> tuple[bytes, bytes]:
                 alti_data = f.read()
     return accel_data, alti_data
 
-def decode_raw_data(accel_data : bytes, alti_data : bytes, altimeter : BMP390) -> tuple[list, list, list, list]:
-    accel_timestamp = peekable(accel_timestamps())
+def decode_raw_data(
+        accel_data : bytes, 
+        alti_data : bytes, 
+        altimeter : BMP390, 
+        accelerometer : ICM20649
+        ) -> None:
     
     accel_idx = 0
     alti_idx = 0
     alti_idx_mod = 0 
 
-    xs = []
-    ys = []
-    zs = []
-    accel_ts = []
-
     while accel_idx < len(accel_data)//6:
         alti_idx_start = alti_idx_mod + alti_idx * 7
         alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
             
-        if (accel_timestamp.peek() < altimeter.timestamp.peek()):
-            accel_ts.append(next(accel_timestamp))
-            [x.append(y) for x, y in zip([xs, ys, zs], decode_accel_reading(accel_data[accel_idx * 6 : (accel_idx + 1) * 6]))]
+        if (accelerometer.timestamp.peek() < altimeter.timestamp.peek()):
+            accelerometer.store_reading(accel_data[accel_idx * 6 : (accel_idx + 1) * 6])
             accel_idx += 1
         else:
             # Check for Control frame or Empty frame
@@ -90,19 +69,6 @@ def decode_raw_data(accel_data : bytes, alti_data : bytes, altimeter : BMP390) -
                 continue
             altimeter.store_reading(alti_data[alti_idx_start : alti_idx_end])
             alti_idx += 1
-
-    return xs, ys, zs, accel_ts
-
-def get_total_accel(xs : list[float], ys : list[float], zs : list[float]):
-    accel = []
-    for a in zip(xs, ys, zs):
-        accel.append(sqrt(a[0]**2 + a[1]**2 +a[2]**2))
-    return accel
-
-def smooth_data(accels:list[float]):
-    accel_smoother = WhittakerSmoother(lmbda=2e4, order=2, data_length=len(accels))
-    smoothed_accels = accel_smoother.smooth_optimal(accels).get_optimal().get_smoothed() 
-    return smoothed_accels
 
 def smooth(raw_data : list[float]):
     smoother = WhittakerSmoother(lmbda=2e4, order=2, data_length=len(raw_data))
@@ -162,29 +128,22 @@ def write_bokeh_files(temps : list, altis : list, alti_ts : list, speeds : list,
     with open("launch-" + launch_name + ".json", "w") as json_file:
         dump(json_item(p, "accel-alti"), json_file) # type: ignore
 
-def main():
-    chdir('data')
+chdir('data')
+for launch in scandir():
+    if DirEntry.is_file(launch):
+        continue
+    chdir(launch)
+    accel_data, alti_data = read_raw_data_from_files()
+    chdir('..')
     altimeter = BMP390(_PACKED_COEFFS, _CURR_BARO_PRESSURE, _ALTI_SAMPLERATE_HZ)
-    for launch in scandir():
-        if DirEntry.is_file(launch):
-            continue
-        chdir(launch)
-        accel_data, alti_data = read_raw_data_from_files()
-        chdir('..')
-        xs, ys, zs, accel_ts = decode_raw_data(accel_data, alti_data, altimeter)
-        # if len(altis) < 5:
-        #     continue
-        accels = get_total_accel(xs, ys, zs)
+    accelerometer = ICM20649(_X_ERR, _Y_ERR, _Z_ERR, _ACCEL_SAMPLERATE_NUM)
+    decode_raw_data(accel_data, alti_data, altimeter, accelerometer)
 
-        smoothed_accels = smooth_data(accels)
-
-        write_bokeh_files(
-            smooth(list(altimeter.temperatures.values())), 
-            smooth(list(altimeter.altitudes.values())), 
-            list(altimeter.altitudes.keys()), # timestamps
-            smooth(list(altimeter.speeds.values())), 
-            accel_ts, 
-            smoothed_accels, 
-            launch.name)
-
-main()
+    write_bokeh_files(
+        smooth(list(altimeter.temperatures.values())), 
+        smooth(list(altimeter.relative_altitudes.values())), 
+        list(altimeter.altitudes.keys()), # timestamps
+        smooth(list(altimeter.speeds.values())), 
+        list(accelerometer.accel.keys()), # timestamps
+        smooth(list(accelerometer.accel.values())), 
+        launch.name)

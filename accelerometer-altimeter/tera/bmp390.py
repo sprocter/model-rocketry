@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Generator, Dict, Tuple
+from typing import Generator, Dict
 from struct import unpack
 
 from more_itertools import peekable
@@ -47,9 +47,9 @@ class BMP390:
             yield float(cur_timestamp.quantize(Decimal('0.0001')))
             cur_timestamp += Decimal(1 / self.samplerate_hz)
 
-    def store_reading(self, alti_reading : bytes) -> None:
-        raw_temp = alti_reading[3] << 16 | alti_reading[2] << 8 | alti_reading[1]
-        raw_pressure = alti_reading[6] << 16 | alti_reading[5] << 8 | alti_reading[4]
+    def store_reading(self, reading : bytes) -> None:
+        raw_temp = reading[3] << 16 | reading[2] << 8 | reading[1]
+        raw_pressure = reading[6] << 16 | reading[5] << 8 | reading[4]
 
         partial_data1 = raw_temp - self.par_t1
         partial_data2 = partial_data1 * self.par_t2
@@ -85,3 +85,7 @@ class BMP390:
         self.altitudes[cur_idx] = alti_ft
         self.speeds[cur_idx] = miles_per_hour
         self.temperatures[cur_idx] = temperature_f
+
+    @property
+    def relative_altitudes(self):
+        return {k: v - self.altitudes[0.0] for k, v in self.altitudes.items()}
