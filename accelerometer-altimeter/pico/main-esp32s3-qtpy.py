@@ -11,7 +11,7 @@ import time, gc, machine, os, vfs
 ### Constants ###
 
 ## User-Modifiable ##
-_RESET_DATA = const(False) # True to wipe all launch history
+_RESET_DATA = const(True) # True to wipe all launch history
 
 _USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
@@ -251,7 +251,7 @@ def initialize_filesystem() -> None:
         # Wipe all existing data
         vfs.umount('/')
         vfs.VfsLfs2.mkfs(bdev) # type: ignore
-        os.mount(os.VfsLfs2(bdev,readsize=1024,progsize=32,lookahead=32),"/") # type: ignore
+        os.mount(os.VfsLfs2(bdev,readsize=2048,progsize=32,lookahead=32),"/") # type: ignore
         os.mkdir("data")
         os.chdir("data")
         os.mkdir("1")
@@ -330,7 +330,7 @@ def main_loop() -> None:
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
-        # print(loop_time)
+        print(loop_time)
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
         else: 
