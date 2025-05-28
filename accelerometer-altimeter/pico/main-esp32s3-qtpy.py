@@ -251,7 +251,7 @@ def initialize_filesystem() -> None:
         # Wipe all existing data
         vfs.umount('/')
         vfs.VfsLfs2.mkfs(bdev) # type: ignore
-        vfs.mount(bdev, '/') # type: ignore
+        os.mount(os.VfsLfs2(bdev,readsize=1024,progsize=32,lookahead=32),"/") # type: ignore
         os.mkdir("data")
         os.chdir("data")
         os.mkdir("1")
@@ -277,7 +277,7 @@ def read_alti_fifo(alti_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
     fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
-    print("Alti FIFO: ", fifo_count)
+    # print("Alti FIFO: ", fifo_count)
     i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_DATA, alti_mv[0:fifo_count])
     return fifo_count
 
@@ -292,7 +292,7 @@ def read_accel_fifo(accel_mv : memoryview) -> int:
     fifo_count_bytes = bytearray(2)
     i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
-    print("Accel FIFO: ", fifo_count)
+    # print("Accel FIFO: ", fifo_count)
     if fifo_count > 0:
         i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, accel_mv[0:fifo_count])
     return fifo_count
@@ -321,7 +321,7 @@ def main_loop() -> None:
         start_ms = time.ticks_ms()
         accel_bytes, alti_bytes = read_fifo(accel_mv, alti_mv)
         write_files(accel_mv[0 : accel_bytes], alti_mv[0 : alti_bytes])
-        
+
         if shutdown_button.value() == 1:
             # Things keep running if the shutdown button is pushed -- the 
             # device only turns off if it runs the full duration
@@ -330,7 +330,6 @@ def main_loop() -> None:
         neopixel[0] = _NEOPIXEL_OFF # type: ignore
         neopixel.write()
         loop_time = time.ticks_diff(time.ticks_ms(), start_ms)
-        print("\tLoop Time: ", loop_time)
         # print(loop_time)
         if _USE_LIGHTSLEEP:
             machine.lightsleep(max(0, (_PERIOD_MS - loop_time)))
