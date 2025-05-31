@@ -11,7 +11,7 @@ import time, gc, machine, os, vfs
 ### Constants ###
 
 ## User-Modifiable ##
-_RESET_DATA = const(True) # True to wipe all launch history
+_RESET_DATA = const(False) # True to wipe all launch history
 
 _USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
@@ -251,12 +251,13 @@ def initialize_filesystem() -> None:
         # Wipe all existing data
         vfs.umount('/')
         vfs.VfsLfs2.mkfs(bdev) # type: ignore
-        os.mount(os.VfsLfs2(bdev,readsize=2048,progsize=32,lookahead=32),"/") # type: ignore
+        vfs.mount(vfs.VfsLfs2(bdev,readsize=2048,progsize=256,lookahead=256, mtime=False),"/") # type: ignore
         os.mkdir("data")
         os.chdir("data")
         os.mkdir("1")
         os.chdir("1")
     else:
+        vfs.mount(vfs.VfsLfs2(bdev,readsize=2048,progsize=256,lookahead=256,mtime=False),"/") # 
         os.chdir("data")
         # Make a new directory named as an integer one higher than the highest 
         # existing directory
