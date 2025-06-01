@@ -15,7 +15,7 @@ from icm20649 import ICM20649
 ## User-Modifiable ##
 _RESET_DATA = const(False) # True to wipe all launch history
 
-_USE_LIGHTSLEEP = const(False) # True to use lightsleep instead of just
+_USE_LIGHTSLEEP = const(True) # True to use lightsleep instead of just
 #                              # time.sleep. Note that setting this to True will
 #                              # break USB output. This is intended to save 
 #                              # power, use it when running on batteries
@@ -67,23 +67,26 @@ shutdown_button = Signal(Pin(0, Pin.IN), invert = True)
 i2c = I2C(1, scl=40, sda=41, freq=400000)
 
 def initialize_filesystem() -> None:
+    # vfs.umount('/')
+    # vfs.VfsLfs2.mkfs(bdev) # type: ignore
+    vfs.mount(vfs.VfsLfs2(bdev,readsize=2048,progsize=256,lookahead=256, mtime=False),"/") # type: ignore
+    os.chdir("data")
     if _RESET_DATA:
         # Wipe all existing data
-        vfs.umount('/')
-        vfs.VfsLfs2.mkfs(bdev) # type: ignore
-        vfs.mount(vfs.VfsLfs2(bdev,readsize=2048,progsize=256,lookahead=256, mtime=False),"/") # type: ignore
-        os.mkdir("data")
-        os.chdir("data")
-        os.mkdir("1")
-        os.chdir("1")
+        for launch_entry in os.ilistdir():
+            os.chdir(launch_entry[0])
+            for file_entry in os.ilistdir():
+                os.remove(file_entry[0])
+            os.chdir("..")
+            os.rmdir(launch_entry[0])
+        new_dir = "1"
     else:
-        vfs.mount(vfs.VfsLfs2(bdev,readsize=2048,progsize=256,lookahead=256,mtime=False),"/") # 
-        os.chdir("data")
         # Make a new directory named as an integer one higher than the highest 
         # existing directory
         new_dir = str(int(sorted([int(i) for i in os.listdir()]).pop()) + 1)
-        os.mkdir(new_dir)
-        os.chdir(new_dir)
+
+    os.mkdir(new_dir)
+    os.chdir(new_dir)
 
 def init() -> tuple[BMP390, ICM20649]:
     machine.freq(_CPU_FREQUENCY)
