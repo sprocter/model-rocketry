@@ -19,10 +19,17 @@ and then blue LED. The LED should then turn off before briefly showing green
 and then blue again, for the duration specified using the user-modifiable 
 constant _DURATION_MINS.
 
-If you want to stop the script from running (typically so you can access the 
-files via mpremote or the micropython REPL) hold the "Boot" button down. You 
+When you want to get the files off the device, hold the "Boot" button down. You 
 may have to hold it for a couple of seconds -- it's only checked when the 
 computer is awake; it will not wake the computer up or skip sensor reading. 
+This will end the sensing loop, turn on the device's wifi (in access point 
+mode, so you'll have to join its network, named something like ESP_XXXXXX), and 
+start a FTP server using the implementation from Christopher Popp and Paul 
+Sokolovsky: https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD. 
+Note: When copying files off of the device, you should plug it into a computer, 
+USB power bank, car charger, etc -- the wifi uses a tremendous amount of power 
+and it is not recommended to run it off of the small battery used for recording 
+data.
 
 At a high level, this script:
 
@@ -38,7 +45,7 @@ sensors), status LED, and filesystem
 from machine import Pin, Signal, I2C
 from micropython import const
 from neopixel import NeoPixel
-import time, gc, machine, os, vfs
+import time, gc, machine, os, vfs, network, ftp
 
 from bmp390 import BMP390
 from icm20649 import ICM20649
@@ -51,7 +58,7 @@ _RESET_DATA = const(False)  # True to wipe all launch history
 """boolean: True to wipe all launch history / free up disk space"""
 
 
-_USE_LIGHTSLEEP = const(False)
+_USE_LIGHTSLEEP = const(True)
 """boolean: True to use lightsleep instead of just time.sleep
 
 Note that setting this to True will break USB output. This is intended to save 
@@ -150,7 +157,7 @@ def initialize_filesystem() -> None:
     os.chdir(new_dir)
 
 
-def init() -> tuple[ICM20649, BMP390]:
+def init() -> tuple[ICM20649, BMP390, network.WLAN]:
     """Initializes the sensors and computer.
 
     This method:
@@ -171,9 +178,10 @@ def init() -> tuple[ICM20649, BMP390]:
     accel.initialize_device()
     alti.initialize_device()
     initialize_filesystem()
+    ap_if = network.WLAN(network.AP_IF)
     neopixel[0] = _NEOPIXEL_OFF  # type: ignore
     neopixel.write()
-    return accel, alti
+    return accel, alti, ap_if
 
 
 def read_fifo(accel: ICM20649, alti: BMP390) -> tuple[int, int]:
@@ -260,5 +268,8 @@ def main_loop(accel: ICM20649, alti: BMP390) -> None:
 
 # This lets us skip running the code (so we can drop into REPL / get the files)
 if shutdown_button.value() == 0:
-    accel, alti = init()
+    accel, alti, wlan = init()
     main_loop(accel, alti)
+    machine.freq(240000000) # The wifi seems to hang if we run it at 40mhz
+    wlan.active(True)
+    ftp.ftpserver()
