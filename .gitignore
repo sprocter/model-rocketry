@@ -162,3 +162,4 @@ cython_debug/
 #.idea/
 accelerometer-altimeter/pico/sandbox.py
 accelerometer-altimeter/data/
+accelerometer-altimeter/pico/sandbox2.py

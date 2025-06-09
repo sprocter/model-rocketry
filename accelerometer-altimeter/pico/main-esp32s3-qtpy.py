@@ -42,10 +42,10 @@ sensors), status LED, and filesystem
   d. Returns to the top of the loop (step 2.a)
 """
 
-from machine import Pin, Signal, I2C
+from machine import Pin, Signal, I2C, RTC
 from micropython import const
 from neopixel import NeoPixel
-import time, gc, machine, os, vfs, network, ftp
+import time, gc, machine, os, vfs, network, esp32, ftp
 
 from bmp390 import BMP390
 from icm20649 import ICM20649
@@ -65,7 +65,7 @@ Note that setting this to True will break USB output. This is intended to save
 power, use it when running on batteries.
 """
 
-_DURATION_MINS = const(5)
+_DURATION_MINS = const(2)
 """int: How long (in minutes) the device will run after powering up.
 
 This will be approximated, unless period_ms divides evenly into the duration.
@@ -113,6 +113,16 @@ neopixel.write()
 # Save / shutdown button #
 shutdown_button = Signal(Pin(0, Pin.IN), invert=True)
 
+# The presence of this value in the computer's RTC memory indicates
+# a wakeup from motion rather than a hard reset / initial power up
+sentinel = const(b'\xde\xad\xbe\xef')
+
+# We've wired the accelerometer's interrupt pin to GPIO18
+pin = Pin(18, Pin.IN)
+
+# Wakeup when the pin activates (on high)
+esp32.wake_on_ext0(pin, esp32.WAKEUP_ANY_HIGH)
+
 # Connect to sensors #
 i2c = I2C(1, scl=40, sda=41, freq=400000)
 
@@ -157,7 +167,7 @@ def initialize_filesystem() -> None:
     os.chdir(new_dir)
 
 
-def init() -> tuple[ICM20649, BMP390, network.WLAN]:
+def init(cold_boot : bool) -> tuple[ICM20649, BMP390]:
     """Initializes the sensors and computer.
 
     This method:
@@ -175,13 +185,14 @@ def init() -> tuple[ICM20649, BMP390, network.WLAN]:
     machine.freq(_CPU_FREQUENCY)
     accel = ICM20649(_RESOLUTION, i2c)
     alti = BMP390(_RESOLUTION, i2c)
-    accel.initialize_device()
-    alti.initialize_device()
-    initialize_filesystem()
-    ap_if = network.WLAN(network.AP_IF)
+    if cold_boot:
+        accel.initialize_device()
+        alti.initialize_device()
+    else:
+        initialize_filesystem()
     neopixel[0] = _NEOPIXEL_OFF  # type: ignore
     neopixel.write()
-    return accel, alti, ap_if
+    return accel, alti
 
 
 def read_fifo(accel: ICM20649, alti: BMP390) -> tuple[int, int]:
@@ -260,16 +271,26 @@ def main_loop(accel: ICM20649, alti: BMP390) -> None:
         # should try and save power further -- this is as close as we can get
         # to shutting everything off
 
-        alti.shutdown()
-        accel.shutdown()
         time.sleep_ms(10)  # Give things a chance to settle
         machine.deepsleep()
 
 
 # This lets us skip running the code (so we can drop into REPL / get the files)
 if shutdown_button.value() == 0:
-    accel, alti, wlan = init()
-    main_loop(accel, alti)
-    machine.freq(240000000) # The wifi seems to hang if we run it at 40mhz
-    wlan.active(True)
-    ftp.ftpserver()
+    rtc = RTC()
+    cold_boot = rtc.memory() != sentinel
+    accel, alti = init(cold_boot)
+    if cold_boot:
+        rtc.memory(sentinel)
+        time.sleep_ms(10)  # Give things a chance to settle
+        machine.deepsleep()
+    else:
+        main_loop(accel, alti)
+        
+        # The main loop puts the device back to sleep, so the following is only 
+        # executed when a user is holding down the BOOT button.
+
+        machine.freq(240000000) # The wifi seems to hang if we run at 40mhz
+        ap_if = network.WLAN(network.AP_IF)
+        ap_if.active(True)
+        ftp.ftpserver()
