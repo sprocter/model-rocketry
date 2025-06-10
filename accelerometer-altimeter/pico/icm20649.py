@@ -116,13 +116,13 @@ class ICM20649:
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b"\x00")
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, self._ACCEL_SAMPLERATE)
 
-        # Enable wake on motion logic, compare samples with previous samples
-        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_INTEL_CTRL, b"\x03") # 0b00000011
+        # Enable wake on motion logic, compare samples with original sample
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_INTEL_CTRL, b"\x02") # 0b00000010
 
         # Wake on motion threshold. Threshold is value * 4 mg
         # But I'm pretty sure mg is milligravity?
-        # Threshold is 512mg, or roughly half a g. # 0b10000000
-        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_WOM_THR, b"\x80")
+        # Threshold is 1020mg, or an additional gravity. # 0b11111111
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_WOM_THR, b"\xFF")
 
         # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, b"\x3f")  # 0b00111111
