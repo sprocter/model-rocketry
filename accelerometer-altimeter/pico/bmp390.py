@@ -1,5 +1,19 @@
+"""A driver for a model rocket altimeter
+
+This script contains initialization and usage functions for the Bosch BMP390:
+https://www.adafruit.com/product/4816
+
+To get the device-specific coefficients, call print_packed_coeffs() after the
+driver has been initialized.
+
+Note that none of this code is designed to be modified by the user.
+"""
+
 from machine import I2C
 import time
+
+MIN_RESOLUTION = const(1)
+MAX_RESOLUTION = const(3)
 
 # Altimeter Registers #
 _ALTI_ADDR = const(0x77)  # Default BMP390 I2C Addr: 119
@@ -18,6 +32,19 @@ _ALTI_CMD = const(0x7E)  # pg 39
 class BMP390:
 
     def __init__(self, resolution: int, i2c: I2C):
+        """Initializes the driver.
+
+        This method initializes globals according to the user's desired resolution: higher values mean more data readings -- thus more power consumption and more disk usage.
+
+        :param int resolution: The amount of data to record, should be in the range [BMP390.MIN_RESOLUTION .. BMP390.MAX_RESOLUTION] (inclusive). Values less than BMP390.MIN_RESOLUTION will be interpreted as BMP390.MIN_RESOLUTION, values greater than BMP390.MAX_RESOLUTION will be interpreted as BMP390.MAX_RESOLUTION.
+        :param I2C i2c: An initialized / connected I2C object allowing communication with the device.
+        """
+
+        if resolution < MIN_RESOLUTION:
+            resolution = MIN_RESOLUTION
+        elif resolution > MAX_RESOLUTION:
+            resolution = MAX_RESOLUTION
+
         # Resolution #
         if resolution == 1:
             # Temperature 1 (001), Pressure 8 (100)
@@ -39,13 +66,24 @@ class BMP390:
         self.mv = memoryview(bytearray(512))
         self.i2c = i2c
 
-    # Call to get the device-specific coefficients needed to decode altimeter data
     def print_packed_coeffs(self) -> None:
+        """Prints the device-specific coeffecients needed to decode the data
+
+        This will print the device's coefficients to the terminal. These coefficients will be a 42 character hex string. That string should be copied and pasted into the sibling python script (which should be located in ../tera).
+
+        This only needs to be done once when you have a new device.
+        """
+
         coeffs_packed = bytearray(21)
         self.i2c.readfrom_mem_into(_ALTI_ADDR, _CALIB_COEFFS, coeffs_packed)
         print('_PACKED_COEFFS = "', str(hex(int.from_bytes(coeffs_packed)))[2:], '"')
 
     def initialize_device(self) -> None:
+        """This initializes the device when power is initially connected.
+
+        This should be called when the device first receives power -- it will leave the device running and recording data at a rate determined by the user-selected resolution value.
+        """
+
         i2c = self.i2c
         # Reset the device
         i2c.writeto_mem(_ALTI_ADDR, _ALTI_CMD, b"\xb6")
@@ -81,6 +119,13 @@ class BMP390:
 
     @micropython.native
     def read_fifo(self) -> int:
+        """Read from the device's FIFO buffer.
+
+        This checks how many bytes are available to read from the device,  reads those bytes into memory, then returns the number of bytes read so they can be written to disk.
+
+        :return: The number of bytes read from the FIFO
+        :rtype: int
+        """
         fifo_count_bytes = bytearray(2)
         self.i2c.readfrom_mem_into(_ALTI_ADDR, _ALTI_FIFO_LENGTH_0, fifo_count_bytes)
         fifo_count = fifo_count_bytes[1] << 8 | fifo_count_bytes[0]
@@ -89,5 +134,6 @@ class BMP390:
         return fifo_count
 
     def shutdown(self) -> None:
+        """Shuts the device off. Call to save power."""
         # Set altimeter to sleep mode, turn off pressure and temperature sensors
         self.i2c.writeto_mem(_ALTI_ADDR, _ALTI_PWR_CTRL, b"\x00")  # RR00RR00
