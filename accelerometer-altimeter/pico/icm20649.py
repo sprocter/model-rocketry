@@ -1,6 +1,21 @@
+"""A driver for a model rocket accelerometer
+
+This script contains initialization and usage functions for the InvenSense 
+ICM20649: https://www.adafruit.com/product/4464
+
+To get the device-specific calibration values, call print_calib_values() after 
+the driver has been initialized.
+
+Note that none of this code is designed to be modified by the user.
+"""
+
+
 from machine import I2C
 from struct import unpack
 import time
+
+MIN_RESOLUTION = const(1)
+MAX_RESOLUTION = const(3)
 
 # Accelerometer Registers #
 _ACCEL_ADDR = const(0x68)  # Default ICM20649 I2C Addr: 104
@@ -33,6 +48,19 @@ _Z_ERR = const(0.044206185)
 class ICM20649:
 
     def __init__(self, resolution: int, i2c: I2C):
+        """Initializes the driver.
+
+        This method initializes globals according to the user's desired resolution: higher values mean more data readings -- thus more power consumption and more disk usage.
+
+        :param int resolution: The amount of data to record, should be in the range [ICM20649.MIN_RESOLUTION .. ICM20649.MAX_RESOLUTION] (inclusive). Values less than ICM20649.MIN_RESOLUTION will be interpreted as ICM20649.MIN_RESOLUTION, values greater than ICM20649.MAX_RESOLUTION will be interpreted as ICM20649.MAX_RESOLUTION.
+        :param I2C i2c: An initialized / connected I2C object allowing communication with the device.
+        """
+
+        if resolution < MIN_RESOLUTION:
+            resolution = MIN_RESOLUTION
+        elif resolution > MAX_RESOLUTION:
+            resolution = MAX_RESOLUTION
+
         # Resolution #
         if resolution == 1:
             # rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.27Hz
@@ -49,12 +77,17 @@ class ICM20649:
 
         # Initialize buffer to the size of the sensor's FIFO
         self.mv = memoryview(bytearray(4096))
-
         self.i2c = i2c
 
     # Call to get the device-specific calibration values needed to correct
     # accelerometer data
     def print_calib_values(self) -> None:
+        """Prints the device-specific calibration values needed to decode the data
+
+        This will print the device's calibration values to the terminal. These values will be three floats (values for the X, Y, and Z axes) and associated assignment statements. All three statements should be copied and pasted into the sibling python script (which should be located in ../tera).
+
+        This only needs to be done once when you have a new device.
+        """
         xs, ys, zs = [], [], []
         reading = bytearray(6)
         print("Set the device face-up on a flat surface and hold it still.")
@@ -74,6 +107,11 @@ class ICM20649:
         print("_Z_ERR = ", sum(zs) / len(zs) - 1)
 
     def initialize_device(self) -> None:
+        """This initializes the device when power is initially connected.
+
+        This should be called when the device first receives power -- it will leave the device running and recording data at a rate determined by the user-selected resolution value.
+        """
+                
         i2c = self.i2c
         low_power = self._LOW_POWER
 
@@ -162,6 +200,14 @@ class ICM20649:
 
     @staticmethod
     def decode_reading(accel_reading: bytes) -> tuple[float, float, float]:
+        """This converts a raw reading into a triple of acceleration values
+
+        This method unpacks the reading, scales each axis, reduces each axis by the associated error, then returns all three values
+
+        :param bytes accel_reading: A single reading from the accelerometer. It should be a bytes object of length six (two bytes per axis)
+        :return: A triple of X acceleration, y acceleration, and z acceleration
+        :rtype: tuple[float, float, float]
+        """
         raw_accel_x, raw_accel_y, raw_accel_z = unpack(">hhh", accel_reading)
         accel_x = (raw_accel_x / 1024) - _X_ERR
         accel_y = (raw_accel_y / 1024) - _Y_ERR
@@ -170,6 +216,13 @@ class ICM20649:
 
     @micropython.native
     def read_fifo(self) -> int:
+        """Read from the device's FIFO buffer.
+
+        This checks how many bytes are available to read from the device,  reads those bytes into memory, then returns the number of bytes read so they can be written to disk.
+
+        :return: The number of bytes read from the FIFO
+        :rtype: int
+        """
         fifo_count_bytes = bytearray(2)
         self.i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
     
@@ -183,12 +236,14 @@ class ICM20649:
             self.i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, self.mv[0:fifo_count])
             # The ICM20649 FIFO holds a longer period of readings than the 
             # BMP390, so we need to discard the excess. We read all of the 
-            # data (to clear the FIFO) but only write the most recent readings.
+            # data (to clear the FIFO) but change this to the correct number of 
+            # readings to write 
             if fifo_count > 1692: 
                 fifo_count = 1692
         return fifo_count
 
     def shutdown(self) -> None:
+        """Shuts the device off. Call to save power."""
         # Turn low power on and temperature sensor off, stop clock
         self.i2c.writeto_mem(_ACCEL_ADDR, _PWR_MGMT_1, b"\x6f")  # 0b01101111
         # Turn off the gyroscope and accelerometer
