@@ -1,3 +1,12 @@
+"""A module for decoding data from a model rocket altimeter
+
+This script contains methods to read data from the Bosch BMP390: https://www.adafruit.com/product/4816
+
+To get the device-specific coefficients, call print_packed_coeffs() on the device after the driver has been initialized.
+
+Note that none of this code is designed to be modified by the user.
+"""
+
 from decimal import Decimal
 from typing import Generator, Dict
 from struct import unpack
@@ -12,8 +21,19 @@ To get this string, call `BMP390.print_packed_coeffs()` on the device when it's 
 
 
 class BMP390:
+    """A class for decoding data from a model rocket altimeter
 
-    def __init__(self, barometric_pressure: int, samplerate_hz: int):
+    After instantiation, this class has three globals -- altitudes, speeds, and temperatures -- which are dictionaries that map timestamps to decoded sensor readings. The timestamps' units are seconds; they start at 0.0 and increase by the amount of time between samples as specified by the samplerate provided when the class is initialized. Altitudes are provided in feet, speeds are in miles per hour, and temperatures in fahrenheit. Altitudes relative to launch are also available via the `relative_altitudes` property, and have the same data structure and units as the globals.
+    """
+
+    def __init__(self, samplerate_hz: int, barometric_pressure: int = 1015):
+        """Iniitalizes the class.
+
+        This method initializes the device-specific coefficients (stored in the `_PACKED_COEFFS` global) and the various internal globals used when decoding the binary-format senor readings.
+
+        :param int samplerate_hz: The number of readings stored by the sensor per second.
+        :param int barometric_pressure: The atmopsheric pressure at the date and location of the launch in millibar. If not provided, a reasonable default is used -- relative altitudes will still be correct.
+        """
         coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", _PACKED_COEFFS)
         self.par_t1 = coeffs_unpacked[0] / (2**-8)
         self.par_t2 = coeffs_unpacked[1] / (2**30)
@@ -42,12 +62,24 @@ class BMP390:
         self.timestamp = peekable(self._timestamps())
 
     def _timestamps(self) -> Generator[float]:
+        """Generator for timestamps
+
+        This generator provides timestamps as parts of a second, derived from the sample rate specified when the class was instantiated.
+        :return: The generator
+        :rtype: Generator[float]
+        """
         cur_timestamp = Decimal(0)
         while True:
             yield float(cur_timestamp.quantize(Decimal("0.0001")))
             cur_timestamp += Decimal(1 / self.samplerate_hz)
 
     def store_reading(self, reading: bytes) -> None:
+        """Decodes a single reading and stores it in memory
+
+        This method decodes the single provided reading and updates the various globals (altitudes, speeds, and temperatures). Note that this method should be passed just the reading -- not an arbitrary frame (which may or may not contain data in addition to a header).
+
+        :param reading bytes: A six-byte sensor reading. The first three bytes are the raw temperature reading, the second three bytes are the raw pressure reading.
+        """
         raw_temp = reading[3] << 16 | reading[2] << 8 | reading[1]
         raw_pressure = reading[6] << 16 | reading[5] << 8 | reading[4]
 
@@ -91,5 +123,12 @@ class BMP390:
         self.temperatures[cur_idx] = temperature_f
 
     @property
-    def relative_altitudes(self):
+    def relative_altitudes(self) -> Dict[float, float]:
+        """Returns a map from timestamps to altitudes relative to launch
+
+        This returns a map derived from / structurally identical to the altitudes recorded by the sensor, but uses launch height as 0 instead of sea level.
+
+        :return: A mappring from timestamps to height above liftoff
+        :rtype: Dict[float, float]
+        """
         return {k: v - self.altitudes[0.0] for k, v in self.altitudes.items()}

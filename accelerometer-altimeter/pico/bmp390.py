@@ -28,6 +28,10 @@ _ALTI_CMD = const(0x7E)  # pg 39
 
 
 class BMP390:
+    """A driver for a model rocket altimeter
+
+    This class stores all data in a memoryview object the size of the BMP390's FIFO buffer -- 512 bytes. The basic workflow is to instantiate the driver, use it to initialize the device, wait a while (but not so long the FIFO buffer fills up / overflows), then read the FIFO buffer (which clears it) into the memoryview object, write that to a file or otherwise store it, then wait a while, read the FIFO buffer again, etc.
+    """
 
     def __init__(self, resolution: int, i2c: I2C):
         """Initializes the driver.

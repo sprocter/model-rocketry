@@ -276,7 +276,7 @@ def main_loop(dir_name: str) -> None:
         chdir(launch)
         accel_data, alti_data = read_raw_data_from_files()
         chdir("..")
-        altimeter = BMP390(_CURR_BARO_PRESSURE, _ALTI_SAMPLERATE_HZ)
+        altimeter = BMP390(_ALTI_SAMPLERATE_HZ, _CURR_BARO_PRESSURE)
         accelerometer = ICM20649(_ACCEL_SAMPLERATE_NUM)
         decode_raw_data(accel_data, alti_data, accelerometer, altimeter)
         write_bokeh_files(accelerometer, altimeter, launch.name)
