@@ -1,48 +1,22 @@
 """A script for a model rocket altimeter / accelerometer
 
-This script contains constants (both user-modifiable and not-modifiable) and
-behavior necessary to measure the altitude and acceleration of a model rocket.
-Importantly, these measurements are stored on the device in a binary format
-that is designed to be read by a sibling script on a conventional computer
-(such as a laptop); it does not produce human-readable output by itself.
+This script contains constants (both user-modifiable and not-modifiable) and behavior necessary to measure the altitude and acceleration of a model rocket. Importantly, these measurements are stored on the device in a binary format that is designed to be read by a sibling script on a conventional computer (such as a laptop); it does not produce human-readable output by itself.
 
-The primary design goal of this script is low power consumption, the secondary
-goal is high-resolution altitude and acceleration data. Lowering the power
-consumption is vital to reducing the size of the battery required to run the
-device, which makes the overall device lighter, which means the model rocket
-can go faster and higher.
+The primary design goal of this script is low power consumption, the secondary goal is high-resolution altitude and acceleration data. Lowering the power consumption is vital to reducing the size of the battery required to run the device, which makes the overall device lighter, which means the model rocket can go faster and higher.
 
-Full instructions for constructing your own altimeter / accelerometer and using 
-this script are available at https://samprocter.com/hobbies/model-rockets/accelerometer-altimeter-instructions/. 
+Full instructions for constructing your own altimeter / accelerometer and using this script are available at https://samprocter.com/hobbies/model-rockets/accelerometer-altimeter-instructions/.
 
 High-level usage instructions follow:
 
-To use this script, copy it, the device drivers, and the FTP server to your 
-ESP32-S3 QT Py, rename this script to "main.py," then reboot the device. It 
-will turn on and run automatically: you should see a brief flash of the red 
-LED. This means the device is initialized and ready to launch. When it 
-experiences high acceleration, it will turn on for some user-configured amount 
-of time (two minutes is the default). In this mode, the green and blue LEDs 
-will flicker every few seconds (by default, every 2.8 seconds).
+To use this script, copy it, the device drivers, and the FTP server to your ESP32-S3 QT Py, rename this script to "main.py," then reboot the device. It will turn on and run automatically: you should see a brief flash of the red LED. This means the device is initialized and ready to launch. When it experiences high acceleration, it will turn on for some user-configured amount of time (two minutes is the default). In this mode, the green and blue LEDs will flicker every few seconds (by default, every 2.8 seconds).
 
-When you want to get the files off the device, connect it to a power source 
-and, when it's running (you may have to shake it to wake it up) hold the "Boot" 
-button down. You may have to hold it for a couple of seconds -- it's only 
-checked when the computer is awake; it will not wake the computer up or skip 
-sensor reading. You can let go when the blue LED stays on.
+When you want to get the files off the device, connect it to a power source and, when it's running (you may have to shake it to wake it up) hold the "Boot" button down. You may have to hold it for a couple of seconds -- it's only checked when the computer is awake; it will not wake the computer up or skip sensor reading. You can let go when the blue LED stays on.
 
-This will end the sensing loop, turn on the device's wifi (in access point 
-mode, so you'll have to join its network, named something like ESP_XXXXXX), and 
-start a FTP server using the implementation from Christopher Popp and Paul 
-Sokolovsky: https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD. 
-Note: When copying files off of the device, you should plug it into a computer, 
-USB power bank, car charger, etc -- the wifi uses a tremendous amount of power 
-and it is not recommended to run it off of the small battery used for recording 
-data.
+This will end the sensing loop, turn on the device's wifi (in access point mode, so you'll have to join its network, named something like ESP_XXXXXX), and start a FTP server using the implementation from Christopher Popp and Paul Sokolovsky: https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD. Note: When copying files off of the device, you should plug it into a computer, USB power bank, car charger, etc -- the wifi uses a tremendous amount of power and it is not recommended to run it off of the small battery used for recording data.
 
 At a high level, this script:
 
-1. Initializes the altimeter, accelerometer, (collectively the sensors), status 
+1. Initializes the altimeter, accelerometer, (collectively the sensors), status
 LED, and filesystem, then goes into a "deep sleep"
 2. When it experiences high acceleration, it will enter the main loop, where it
   a. Reads from the sensors' FIFO caches
@@ -69,8 +43,7 @@ _RESET_DATA = const(False)  # True to wipe all launch history
 _USE_LIGHTSLEEP = const(True)
 """boolean: True to use lightsleep instead of just time.sleep
 
-Note that setting this to True will break USB output. This is intended to save 
-power, use it when running on batteries.
+Note that setting this to True will break USB output. This is intended to save  power, use it when running on batteries.
 """
 
 _DURATION_MINS = const(2)
@@ -123,7 +96,7 @@ shutdown_button = Signal(Pin(0, Pin.IN), invert=True)
 
 # The presence of this value in the computer's RTC memory indicates
 # a wakeup from motion rather than a hard reset / initial power up
-sentinel = const(b'\xde\xad\xbe\xef')
+sentinel = const(b"\xde\xad\xbe\xef")
 
 # We've wired the accelerometer's interrupt pin to GPIO18
 pin = Pin(18, Pin.IN)
@@ -138,15 +111,12 @@ i2c = I2C(1, scl=40, sda=41, freq=400000)
 def initialize_filesystem() -> None:
     """Prepares the filesystem for use.
 
-    After this is complete, the current working directory will be empty, and
-    named with a decimal value that is one higher than the previously-highest
-    directory name.
+    After this is complete, the current working directory will be empty, and named with a decimal value that is one higher than the previously-highest directory name.
 
     Example:
     * If the _RESET_DATA global variable is True:
         * The current working directory will be "1"
-    * If the _RESET_DATA global variable is False and the highest directory 
-    prior to this method's invocation was "42"
+    * If the _RESET_DATA global variable is False and the highest directory prior to this method's invocation was "42"
         * The current working directory will be "43"
     """
 
@@ -175,22 +145,18 @@ def initialize_filesystem() -> None:
     os.chdir(new_dir)
 
 
-def init(cold_boot : bool) -> tuple[ICM20649, BMP390]:
+def init(cold_boot: bool) -> tuple[ICM20649, BMP390]:
     """Initializes the sensors and computer.
 
     This method:
-    1. Clocks the computer's CPU up or down (according to the frequency aligned 
-    with the user's resolution selection in the _RESOLUTION global)
+    1. Clocks the computer's CPU up or down (according to the frequency aligned with the user's resolution selection in the _RESOLUTION global)
     2. (If the device was off previously) Instantiates the sensors' driver classes
     3. (If the device was in deepsleep previously) Initializes the filesystem
-    4. Turns off the status LED (which had been red) as initialization is 
-    complete.
+    4. Turns off the status LED (which had been red) as initialization is complete.
 
-    :param bool cold_boot: True if the device was just powered up from being 
-    completely off, false if the device was awoken from deepsleep with the sensors initialized / running
-    :return: An instance of the altimeter and accelerometer driver classes, 
-    respectively.
-    :rtype: BMP390, ICM20649
+    :param bool cold_boot: True if the device was just powered up from being completely off, false if the device was awoken from deepsleep with the sensors initialized / running
+    :return: Instances of the altimeter and accelerometer driver classes respectively.
+    :rtype: tuple[BMP390, ICM20649]
     """
     machine.freq(_CPU_FREQUENCY)
     accel = ICM20649(_RESOLUTION, i2c)
@@ -208,15 +174,11 @@ def init(cold_boot : bool) -> tuple[ICM20649, BMP390]:
 def read_fifo(accel: ICM20649, alti: BMP390) -> tuple[int, int]:
     """Reads from the sensors' FIFO caches
 
-    Invokes the read_fifo() methods of the device drivers and returns the 
-    number of bytes read. Sets the status LED to green.
+    Invokes the read_fifo() methods of the device drivers and returns the number of bytes read. Sets the status LED to green.
 
-    :param ICM20649 accel: An instance of the accelerometer driver class which 
-    has been initialized
-    :param BMP390 alti: An instance of the altimeter driver class which has 
-    been initialized
-    :return: The number of bytes read from the accelerometer and altimeter, 
-    respectively
+    :param ICM20649 accel: An instance of the accelerometer driver class which has been initialized
+    :param BMP390 alti: An instance of the altimeter driver class which has been initialized
+    :return: The number of bytes read from the accelerometer and altimeter, respectively
     :rtype: int, int
     """
     neopixel[0] = _NEOPIXEL_GRN  # type: ignore
@@ -231,7 +193,7 @@ def write_files(accel_mv: memoryview, alti_mv: memoryview) -> None:
 
     Note that the entire memoryview will be written -- they should be resized to the appropriate length prior to calling this method.
 
-    :param memoryview accel_mv: The accelerometer readings. 
+    :param memoryview accel_mv: The accelerometer readings.
     :param memoryview alti_mv: The altimeter readings.
     """
     neopixel[0] = _NEOPIXEL_BLU  # type: ignore
@@ -247,12 +209,11 @@ def write_files(accel_mv: memoryview, alti_mv: memoryview) -> None:
 def main_loop(accel: ICM20649, alti: BMP390) -> None:
     """Core loop: Read from sensors, write to files, sleep, repeat.
 
-    This will loop for the number of periods (as stored in the 
-    _DURATION_PERIODS global). You can exit the loop early -- which will also avoid sleeping, if on battery power -- by holding the "Boot" button.
+    This will loop for the number of periods (as stored in the _DURATION_PERIODS global). You can exit the loop early -- which will also avoid sleeping, if on battery power -- by holding the "Boot" button.
 
-    :param ICM20649 accel: An instance of the accelerometer driver class which 
+    :param ICM20649 accel: An instance of the accelerometer driver class which
     has been initialized
-    :param BMP390 alti: An instance of the altimeter driver class which has 
+    :param BMP390 alti: An instance of the altimeter driver class which has
     been initialized
     """
 
@@ -296,11 +257,11 @@ if shutdown_button.value() == 0:
         machine.deepsleep()
     else:
         main_loop(accel, alti)
-        
-        # The main loop puts the device back to sleep, so the following is only 
+
+        # The main loop puts the device back to sleep, so the following is only
         # executed when a user is holding down the BOOT button.
 
-        machine.freq(240000000) # The wifi seems to hang if we run at 40mhz
+        machine.freq(240000000)  # The wifi seems to hang if we run at 40mhz
         ap_if = network.WLAN(network.AP_IF)
         ap_if.active(True)
         ftp.ftpserver()

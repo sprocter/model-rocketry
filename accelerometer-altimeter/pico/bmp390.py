@@ -1,10 +1,8 @@
 """A driver for a model rocket altimeter
 
-This script contains initialization and usage functions for the Bosch BMP390:
-https://www.adafruit.com/product/4816
+This script contains initialization and usage functions for the Bosch BMP390: https://www.adafruit.com/product/4816
 
-To get the device-specific coefficients, call print_packed_coeffs() after the
-driver has been initialized.
+To get the device-specific coefficients, call print_packed_coeffs() after the driver has been initialized.
 
 Note that none of this code is designed to be modified by the user.
 """

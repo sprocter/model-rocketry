@@ -1,14 +1,11 @@
 """A driver for a model rocket accelerometer
 
-This script contains initialization and usage functions for the InvenSense 
-ICM20649: https://www.adafruit.com/product/4464
+This script contains initialization and usage functions for the InvenSense  ICM20649: https://www.adafruit.com/product/4464
 
-To get the device-specific calibration values, call print_calib_values() after 
-the driver has been initialized.
+To get the device-specific calibration values, call print_calib_values() after the driver has been initialized.
 
 Note that none of this code is designed to be modified by the user.
 """
-
 
 from machine import I2C
 from struct import unpack
@@ -25,7 +22,7 @@ _LP_CONFIG = const(0x05)  # Bank 0, pg 39
 _PWR_MGMT_1 = const(0x06)  # Bank 0, pg 39
 _PWR_MGMT_2 = const(0x07)  # Bank 0, pg 40
 _INT_PIN_CFG = const(0x0F)  # Bank 0, pg 40
-_INT_ENABLE = const(0x10) # Bank 0, pg 41
+_INT_ENABLE = const(0x10)  # Bank 0, pg 41
 _FIFO_EN_2 = const(0x67)  # Bank 0, pg 54
 _FIFO_RST = const(0x68)  # Bank 0, pg 55
 _FIFO_MODE = const(0x69)  # Bank 0, pg 55
@@ -111,7 +108,7 @@ class ICM20649:
 
         This should be called when the device first receives power -- it will leave the device running and recording data at a rate determined by the user-selected resolution value.
         """
-                
+
         i2c = self.i2c
         low_power = self._LOW_POWER
 
@@ -134,10 +131,10 @@ class ICM20649:
 
         # Set interrupt pin 1 logic level high, push-pull, clear after 50µs,
         # clear INT_STATUS on any read operation
-        i2c.writeto_mem(_ACCEL_ADDR, _INT_PIN_CFG, b"\x10") # 0b00010000
+        i2c.writeto_mem(_ACCEL_ADDR, _INT_PIN_CFG, b"\x10")  # 0b00010000
 
         # Enable interrupt for wake on motion to propagate to interrupt pin 1
-        i2c.writeto_mem(_ACCEL_ADDR, _INT_ENABLE, b"\x08") # 0b00001000
+        i2c.writeto_mem(_ACCEL_ADDR, _INT_ENABLE, b"\x08")  # 0b00001000
 
         # Turn DMP Off, FIFO on, i2c master i/f module off, don't reset anything
         i2c.writeto_mem(_ACCEL_ADDR, _USER_CTRL, b"\x40")  # 0b01000000
@@ -155,12 +152,12 @@ class ICM20649:
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, self._ACCEL_SAMPLERATE)
 
         # Enable wake on motion logic, compare samples with original sample
-        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_INTEL_CTRL, b"\x02") # 0b00000010
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_INTEL_CTRL, b"\x02")  # 0b00000010
 
         # Wake on motion threshold. Threshold is value * 4 mg
         # But I'm pretty sure mg is milligravity?
         # Threshold is 1020mg, or an additional gravity. # 0b11111111
-        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_WOM_THR, b"\xFF")
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_WOM_THR, b"\xff")
 
         # Low pass filter = 3, Accelerometer Full Scale 30g, DLPF Enabled
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG, b"\x3f")  # 0b00111111
@@ -225,8 +222,8 @@ class ICM20649:
         """
         fifo_count_bytes = bytearray(2)
         self.i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_COUNTH, fifo_count_bytes)
-    
-        # There seems to be an off-by-one error in the ICM20649: When the 
+
+        # There seems to be an off-by-one error in the ICM20649: When the
         # buffer is full, FIFO_COUNTH is 0b00010000 but the datasheet says it
         # should be 0b00001111. So instead of &ing it with 15, we & it with 31
         # fifo_count = (fifo_count_bytes[0] & 15) << 8 | fifo_count_bytes[1]
@@ -234,11 +231,11 @@ class ICM20649:
         # print("Accel FIFO: ", fifo_count)
         if fifo_count > 0:
             self.i2c.readfrom_mem_into(_ACCEL_ADDR, _FIFO_R_W, self.mv[0:fifo_count])
-            # The ICM20649 FIFO holds a longer period of readings than the 
-            # BMP390, so we need to discard the excess. We read all of the 
-            # data (to clear the FIFO) but change this to the correct number of 
-            # readings to write 
-            if fifo_count > 1692: 
+            # The ICM20649 FIFO holds a longer period of readings than the
+            # BMP390, so we need to discard the excess. We read all of the
+            # data (to clear the FIFO) but change this to the correct number of
+            # readings to write
+            if fifo_count > 1692:
                 fifo_count = 1692
         return fifo_count
 
