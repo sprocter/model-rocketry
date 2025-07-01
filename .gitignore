@@ -163,3 +163,5 @@ cython_debug/
 accelerometer-altimeter/pico/sandbox.py
 accelerometer-altimeter/data/
 accelerometer-altimeter/pico/sandbox2.py
+accelerometer-altimeter/.vscode/
+accelerometer-altimeter/.micropico
