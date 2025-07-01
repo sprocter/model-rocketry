@@ -1,5 +1,15 @@
 """A script for processing model-rocketry sensor data into a human-readable form
 
+--------------------------------------------------------------------------------
+Copyright (C) 2025 Sam Procter
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
+--------------------------------------------------------------------------------
+
 This script processes raw sensor data (in binary format) from a commonly-available pressure sensor (the `Bosch BMP390`_) and accelerometer (the InvenSense ICM20649). These devices are small and light enough to go, along with a small battery and computer, onto a model rocket to record data during launches.
 
 This code is designed to run on a full python installation (3.13+). Please see the sister script (located in `../pico`) for the code that should run on the smaller devices aboard the rocket itself. It requires the `Bokeh`_ and `Whittaker Smoother`_ libraries.

@@ -1,5 +1,15 @@
 """A driver for a model rocket altimeter
 
+--------------------------------------------------------------------------------
+Copyright (C) 2025 Sam Procter
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
+--------------------------------------------------------------------------------
+
 This script contains initialization and usage functions for the Bosch BMP390: https://www.adafruit.com/product/4816
 
 To get the device-specific coefficients, call print_packed_coeffs() after the driver has been initialized.

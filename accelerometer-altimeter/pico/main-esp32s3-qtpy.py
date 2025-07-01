@@ -1,5 +1,15 @@
 """A script for a model rocket altimeter / accelerometer
 
+--------------------------------------------------------------------------------
+Copyright (C) 2025 Sam Procter
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
+--------------------------------------------------------------------------------
+
 This script contains constants (both user-modifiable and not-modifiable) and behavior necessary to measure the altitude and acceleration of a model rocket. Importantly, these measurements are stored on the device in a binary format that is designed to be read by a sibling script on a conventional computer (such as a laptop); it does not produce human-readable output by itself.
 
 The primary design goal of this script is low power consumption, the secondary goal is high-resolution altitude and acceleration data. Lowering the power consumption is vital to reducing the size of the battery required to run the device, which makes the overall device lighter, which means the model rocket can go faster and higher.
