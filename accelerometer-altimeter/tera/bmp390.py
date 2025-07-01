@@ -34,7 +34,7 @@ class BMP390:
         :param int samplerate_hz: The number of readings stored by the sensor per second.
         :param int barometric_pressure: The atmopsheric pressure at the date and location of the launch in millibar. If not provided, a reasonable default is used -- relative altitudes will still be correct.
         """
-        coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", _PACKED_COEFFS)
+        coeffs_unpacked = unpack("<HHbhhbbHHbbhbb", bytes.fromhex(_PACKED_COEFFS))
         self.par_t1 = coeffs_unpacked[0] / (2**-8)
         self.par_t2 = coeffs_unpacked[1] / (2**30)
         self.par_t3 = coeffs_unpacked[2] / (2**48)
@@ -59,6 +59,7 @@ class BMP390:
         self.speeds: Dict[float, float] = {}
         self.temperatures: Dict[float, float] = {}
 
+        self.timestamp_increment = Decimal(1 / samplerate_hz)
         self.timestamp = peekable(self._timestamps())
 
     def _timestamps(self) -> Generator[float]:
@@ -71,7 +72,7 @@ class BMP390:
         cur_timestamp = Decimal(0)
         while True:
             yield float(cur_timestamp.quantize(Decimal("0.0001")))
-            cur_timestamp += Decimal(1 / self.samplerate_hz)
+            cur_timestamp += self.timestamp_increment
 
     def store_reading(self, reading: bytes) -> None:
         """Decodes a single reading and stores it in memory
