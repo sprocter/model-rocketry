@@ -22,6 +22,8 @@ from decimal import Decimal
 from typing import Generator, Dict
 from struct import unpack
 
+from itertools import pairwise
+
 from more_itertools import peekable
 
 _PACKED_COEFFS = "996e384df93a1a52140601684e9d6003fabd0f05f5"
@@ -67,7 +69,6 @@ class BMP390:
         self.samplerate_hz = samplerate_hz
 
         self.altitudes: Dict[float, float] = {}
-        self.speeds: Dict[float, float] = {}
         self.temperatures: Dict[float, float] = {}
 
         self.timestamp_increment = Decimal(1 / samplerate_hz)
@@ -122,17 +123,31 @@ class BMP390:
             1 - ((float(pressure_hpa / 100) / self.barometric_pressure) ** 0.190284)
         ) * 145366.45
 
-        if len(self.altitudes) > 0:
-            prev_alti = list(self.altitudes.values())[-1]
-            change = abs(alti_ft - prev_alti)
-            miles_per_hour = change * self.samplerate_hz * 0.681818
-        else:
-            miles_per_hour = 0.0
-
         cur_idx = next(self.timestamp)
         self.altitudes[cur_idx] = alti_ft
-        self.speeds[cur_idx] = miles_per_hour
         self.temperatures[cur_idx] = temperature_f
+
+    @property
+    def speeds(self) -> Dict[float, float]:
+        """Returns a map from timestamps to speeds in mph
+
+        This returns a map from timestamps to velocities. The initial velocity is always set to 0, since velocities are calculated based on the change in altitude between two timesteps.
+
+        :return: A mappring from timestamps to speed (in mph)
+        :rtype: Dict[float, float]
+        """
+        value_list = list(self.altitudes.values())
+        return {
+            # feet per second * .681818 = miles per hour
+            k: abs(v[1] - v[0]) * self.samplerate_hz * 0.681818
+            for k, v in zip(
+                self.altitudes.keys(),
+                # Insert a copy of the first value so that:
+                # 1. We have the correct number of speeds
+                # 2. The first speed is always 0
+                pairwise([value_list[0]] + value_list),
+            )
+        }
 
     @property
     def relative_altitudes(self) -> Dict[float, float]:
