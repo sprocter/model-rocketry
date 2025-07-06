@@ -73,14 +73,17 @@ class ICM20649:
             # rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.27Hz
             self._ACCEL_SAMPLERATE = b"\x0a"
             self._LOW_POWER = True
+            self._MAX_FIFO_COUNT = 1692
         elif resolution == 2:
             # rate = 2, rate_hz = 1125/(1 + rate) = 1125/3 = 375
             self._ACCEL_SAMPLERATE = b"\x02"
             self._LOW_POWER = False
+            self._MAX_FIFO_COUNT = 3180
         elif resolution == 3:
             # rate = 1, rate_hz = 1125/(1 + rate) = 1125/2 = 562.5
             self._ACCEL_SAMPLERATE = b"\x01"
             self._LOW_POWER = False
+            self._MAX_FIFO_COUNT = 2400
 
         # Initialize buffer to the size of the sensor's FIFO
         self.mv = memoryview(bytearray(4096))
@@ -245,8 +248,8 @@ class ICM20649:
             # BMP390, so we need to discard the excess. We read all of the
             # data (to clear the FIFO) but change this to the correct number of
             # readings to write
-            if fifo_count > 1692:
-                fifo_count = 1692
+            if fifo_count > self._MAX_FIFO_COUNT:
+                fifo_count = self._MAX_FIFO_COUNT
         return fifo_count
 
     def shutdown(self) -> None:
