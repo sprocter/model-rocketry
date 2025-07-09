@@ -22,7 +22,7 @@ To use this script, copy it, the device drivers, and the FTP server to your ESP3
 
 When you want to get the files off the device, connect it to a power source and, when it's running (you may have to shake it to wake it up) hold the "Boot" button down. You may have to hold it for a couple of seconds -- it's only checked when the computer is awake; it will not wake the computer up or skip sensor reading. You can let go when the blue LED stays on.
 
-This will end the sensing loop, turn on the device's wifi (in access point mode, so you'll have to join its network, named something like ESP_XXXXXX), and start a FTP server using the implementation from Christopher Popp and Paul Sokolovsky: https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD. Note: When copying files off of the device, you should plug it into a computer, USB power bank, car charger, etc -- the wifi uses a tremendous amount of power and it is not recommended to run it off of the small battery used for recording data.
+This will end the sensing loop, turn on the device's wifi (in access point mode, so you'll have to join its network, named whatever you set in the wifi.txt file), and start a FTP server using the implementation from Christopher Popp and Paul Sokolovsky: https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD. Note: When copying files off of the device, you should plug it into a computer, USB power bank, car charger, etc -- the wifi uses a tremendous amount of power and it is not recommended to run it off of the small battery used for recording data.
 
 At a high level, this script:
 
@@ -38,7 +38,7 @@ LED, and filesystem, then goes into a "deep sleep"
 from machine import Pin, Signal, I2C, RTC
 from micropython import const
 from neopixel import NeoPixel
-import time, gc, machine, os, vfs, network, esp32, ftp
+import time, gc, machine, os, vfs, network, esp32, ftp, json
 
 from bmp390 import BMP390
 from icm20649 import ICM20649
@@ -272,6 +272,9 @@ if shutdown_button.value() == 0:
         # executed when a user is holding down the BOOT button.
 
         machine.freq(240000000)  # The wifi seems to hang if we run at 40mhz
+        with open("wifi.txt", "r") as f:
+            wifi = json.loads(f.read())
         ap_if = network.WLAN(network.AP_IF)
         ap_if.active(True)
+        ap_if.config(ssid=wifi["ssid"], security=3, key=wifi["key"])
         ftp.ftpserver()
