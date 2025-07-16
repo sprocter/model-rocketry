@@ -104,16 +104,15 @@ _RESOLUTION = 3
 Higher values mean more sensor readings, more current draw, and more disk usage. Should be set to the same value as was used on the device when the readings were taken -- we use this information to accurately rebuild the sensor readings' timestamps.
 """
 
+# X in 1125/(1+X), which gives the accelerometer's sample rate in Hz
+_ACCEL_SAMPLERATE_NUM = 10
+
 if _RESOLUTION == 1:
-    # X in 1125/(1+X), which gives the accelerometer's sample rate in Hz
-    _ACCEL_SAMPLERATE_NUM = 10
     # The altimeter's sample rate in Hz
     _ALTI_SAMPLERATE_HZ = 25
 elif _RESOLUTION == 2:
-    _ACCEL_SAMPLERATE_NUM = 2
     _ALTI_SAMPLERATE_HZ = 50
 elif _RESOLUTION == 3:
-    _ACCEL_SAMPLERATE_NUM = 1
     _ALTI_SAMPLERATE_HZ = 100
 else:
     print("Resolution must be between 1 and 3.")
@@ -263,7 +262,7 @@ def write_bokeh_files(
     ax4.axis_label_text_color = "lightblue"
     p.add_layout(ax4, "right")
 
-    p.line(accel_ts, accels, legend_label="Acceleration (g)", color="lightgreen", line_width=2)  # type: ignore
+    p.line(accel_ts, accels, legend_label="Acceleration (g)", color="lightgreen", line_width=2, y_range_name="acceleration")  # type: ignore
     p.line(alti_ts, speeds, legend_label="Velocity (mph)", color="white", line_width=2)  # type: ignore
     p.line(alti_ts, temps, legend_label="Temperature (f)", color="lightblue", line_width=2, y_range_name="temperature")  # type: ignore
     p.line(alti_ts, altis, legend_label="Altitude (ft)", color="red", line_width=2, y_range_name="altitude")  # type: ignore

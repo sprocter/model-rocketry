@@ -23,6 +23,7 @@ import time
 
 MIN_RESOLUTION = const(1)
 MAX_RESOLUTION = const(3)
+_MAX_FIFO_COUNT = 1692
 
 # Accelerometer Registers #
 _ACCEL_ADDR = const(0x68)  # Default ICM20649 I2C Addr: 104
@@ -71,19 +72,9 @@ class ICM20649:
         # Resolution #
         if resolution == 1:
             # rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.27Hz
-            self._ACCEL_SAMPLERATE = b"\x0a"
             self._LOW_POWER = True
-            self._MAX_FIFO_COUNT = 1692
-        elif resolution == 2:
-            # rate = 2, rate_hz = 1125/(1 + rate) = 1125/3 = 375
-            self._ACCEL_SAMPLERATE = b"\x02"
+        elif (resolution == 2) or (resolution == 3):
             self._LOW_POWER = False
-            self._MAX_FIFO_COUNT = 3180
-        elif resolution == 3:
-            # rate = 1, rate_hz = 1125/(1 + rate) = 1125/2 = 562.5
-            self._ACCEL_SAMPLERATE = b"\x01"
-            self._LOW_POWER = False
-            self._MAX_FIFO_COUNT = 2400
 
         # Initialize buffer to the size of the sensor's FIFO
         self.mv = memoryview(bytearray(4096))
@@ -159,10 +150,10 @@ class ICM20649:
             # Enable ODR start-time alignment
             i2c.writeto_mem(_ACCEL_ADDR, _ODR_ALIGN_EN, b"\x01")
 
-        # Sample rate: See Resolution section of Constants
+        # Sample rate: rate = 10, rate_hz = 1125/(1 + rate) = 1125/11 = 102.27Hz
         # Split across two bytes, 12 bits
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_1, b"\x00")
-        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, self._ACCEL_SAMPLERATE)
+        i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_SMPLRT_DIV_2, b"\x0a")
 
         # Enable wake on motion logic, compare samples with original sample
         i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_INTEL_CTRL, b"\x02")  # 0b00000010
@@ -181,6 +172,9 @@ class ICM20649:
 
             # Disable DMP in LP Accelerometer mode
             i2c.writeto_mem(_ACCEL_ADDR, _MOD_CTRL_USR, b"\x02")
+        else:
+            # Average 32 samples
+            i2c.writeto_mem(_ACCEL_ADDR, _ACCEL_CONFIG_2, b"\x03")  # 0b0000011
 
         # Back to Bank 0
         i2c.writeto_mem(_ACCEL_ADDR, _REG_BANK_SEL, b"\x00")
