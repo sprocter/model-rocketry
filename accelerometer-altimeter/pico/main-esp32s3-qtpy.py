@@ -62,7 +62,7 @@ _DURATION_MINS = const(2)
 This will be approximated, unless period_ms divides evenly into the duration.
 """
 
-_RESOLUTION = const(1)
+_RESOLUTION = const(3)
 """int (1-3): The 'resolution' of the sensor readings.
 
 Higher values mean more sensor readings, more current draw, and more disk usage."""
@@ -77,10 +77,10 @@ if _RESOLUTION == 1:
     _CPU_FREQUENCY = 40000000
 if _RESOLUTION == 2:
     _PERIOD_MS = 1400
-    _CPU_FREQUENCY = 80000000
+    _CPU_FREQUENCY = 40000000
 elif _RESOLUTION == 3:
     _PERIOD_MS = 700
-    _CPU_FREQUENCY = 160000000
+    _CPU_FREQUENCY = 40000000
 
 # Timing #
 _DURATION_PERIODS = ((_DURATION_MINS * 60) * 1000) // _PERIOD_MS
@@ -270,7 +270,7 @@ if shutdown_button.value() == 0:
 
         # The main loop puts the device back to sleep, so the following is only
         # executed when a user is holding down the BOOT button.
-
+        time.sleep_ms(10)  # Give things a chance to settle
         machine.freq(240000000)  # The wifi seems to hang if we run at 40mhz
         with open("wifi.txt", "r") as f:
             wifi = json.loads(f.read())

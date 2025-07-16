@@ -79,6 +79,7 @@ After invocation of this script:
 from io import open
 from json import dump
 from os import chdir, scandir, listdir, DirEntry
+from traceback import print_exception
 
 # See https://towardsdatascience.com/the-perfect-way-to-smooth-your-noisy-data-4f3fe6b44440/
 from whittaker_eilers import WhittakerSmoother
@@ -97,7 +98,7 @@ _CURR_BARO_PRESSURE = 1020
 This value has to be retrieved from your favorite weather app and written down at the time and location of the launch if you want accurate absolute altitudes.
 """
 
-_RESOLUTION = 1
+_RESOLUTION = 3
 """int (1-3): The 'resolution' of the sensor readings.
 
 Higher values mean more sensor readings, more current draw, and more disk usage. Should be set to the same value as was used on the device when the readings were taken -- we use this information to accurately rebuild the sensor readings' timestamps.
@@ -157,7 +158,9 @@ def decode_raw_data(
     alti_idx = 0
     alti_idx_mod = 0
 
-    while accel_idx < len(accel_data) // 6:
+    while (accel_idx < len(accel_data) // 6) and (
+        alti_idx_mod + alti_idx * 7 < len(alti_data)
+    ):
         alti_idx_start = alti_idx_mod + alti_idx * 7
         alti_idx_end = alti_idx_mod + (alti_idx + 1) * 7
 
@@ -288,8 +291,13 @@ def main_loop(dir_name: str) -> None:
         chdir("..")
         altimeter = BMP390(_ALTI_SAMPLERATE_HZ, _CURR_BARO_PRESSURE)
         accelerometer = ICM20649(_ACCEL_SAMPLERATE_NUM)
-        decode_raw_data(accel_data, alti_data, accelerometer, altimeter)
-        write_bokeh_files(accelerometer, altimeter, launch.name)
+        try:
+            decode_raw_data(accel_data, alti_data, accelerometer, altimeter)
+            write_bokeh_files(accelerometer, altimeter, launch.name)
+        except Exception as e:
+            print("Problem decoding launch", launch)
+            print_exception(e)
+            continue
 
 
 main_loop("data")
