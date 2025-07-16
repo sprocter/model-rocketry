@@ -215,6 +215,22 @@ def write_files(accel_mv: memoryview, alti_mv: memoryview) -> None:
         f.write(alti_mv)
 
 
+def share_files() -> None:
+    """Turns on wifi and an FTP server
+
+    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "wifi.txt"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
+    """
+    time.sleep_ms(10)  # Give things a chance to settle
+    machine.freq(80000000)  # The wifi seems to hang if we run at 40mhz
+    with open("/wifi.txt", "r") as f:
+        wifi = json.loads(f.read())
+    ap_if = network.WLAN(network.AP_IF)
+    ap_if.active(True)
+    time.sleep_ms(10)  # Give things a chance to settle
+    ap_if.config(ssid=wifi["ssid"], security=3, key=wifi["key"])
+    ftp.ftpserver()
+
+
 @micropython.native
 def main_loop(accel: ICM20649, alti: BMP390) -> None:
     """Core loop: Read from sensors, write to files, sleep, repeat.
@@ -235,7 +251,11 @@ def main_loop(accel: ICM20649, alti: BMP390) -> None:
         if shutdown_button.value() == 1:
             # Things keep running if the shutdown button is pushed -- the
             # device only turns off if it runs the full duration
-            return
+            share_files()
+            # If we're back here, it means the user has disconnected from the
+            # FTP server
+            time.sleep_ms(10)  # Give things a chance to settle
+            machine.deepsleep()
 
         neopixel[0] = _NEOPIXEL_OFF  # type: ignore
         neopixel.write()
@@ -249,8 +269,9 @@ def main_loop(accel: ICM20649, alti: BMP390) -> None:
     if _USE_LIGHTSLEEP:
         # Lightsleep is used when on battery power.
         # Since we're on battery power, and we've run for the full duration, we
-        # should try and save power further -- this is as close as we can get
-        # to shutting everything off
+        # should try and save power further -- this puts the ESP32-S3 into a
+        # low-power state but leaves the sensors running so it's ready for
+        # another launch.
 
         time.sleep_ms(10)  # Give things a chance to settle
         machine.deepsleep()
@@ -267,14 +288,5 @@ if shutdown_button.value() == 0:
         machine.deepsleep()
     else:
         main_loop(accel, alti)
-
-        # The main loop puts the device back to sleep, so the following is only
-        # executed when a user is holding down the BOOT button.
-        time.sleep_ms(10)  # Give things a chance to settle
-        machine.freq(240000000)  # The wifi seems to hang if we run at 40mhz
-        with open("wifi.txt", "r") as f:
-            wifi = json.loads(f.read())
-        ap_if = network.WLAN(network.AP_IF)
-        ap_if.active(True)
-        ap_if.config(ssid=wifi["ssid"], security=3, key=wifi["key"])
-        ftp.ftpserver()
+else:
+    share_files()

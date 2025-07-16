@@ -242,8 +242,8 @@ class ICM20649:
             # BMP390, so we need to discard the excess. We read all of the
             # data (to clear the FIFO) but change this to the correct number of
             # readings to write
-            if fifo_count > self._MAX_FIFO_COUNT:
-                fifo_count = self._MAX_FIFO_COUNT
+            if fifo_count > _MAX_FIFO_COUNT:
+                fifo_count = _MAX_FIFO_COUNT
         return fifo_count
 
     def shutdown(self) -> None:
