@@ -23,7 +23,7 @@ import time
 
 MIN_RESOLUTION = const(1)
 MAX_RESOLUTION = const(3)
-_MAX_FIFO_COUNT = 1692
+_MAX_FIFO_COUNT = 1752
 
 # Accelerometer Registers #
 _ACCEL_ADDR = const(0x68)  # Default ICM20649 I2C Addr: 104

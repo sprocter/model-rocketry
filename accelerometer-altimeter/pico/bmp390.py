@@ -69,10 +69,10 @@ class BMP390:
             # 50 Hz / 20ms sampling period
             self._ALTI_DATARATE = b"\x02"
         elif resolution == 3:
-            # Temperature 1 (000), Pressure 2 (001)
-            self._ALTI_OVERSAMPLE = b"\x01"
-            # 100 Hz / 10ms sampling period
-            self._ALTI_DATARATE = b"\x01"
+            # Temperature 2 (001), Pressure 16 (100)
+            self._ALTI_OVERSAMPLE = b"\x0c"
+            # 25 Hz / 40ms sampling period
+            self._ALTI_DATARATE = b"\x03"
 
         # Initialize buffer to the size of the sensor's FIFO
         self.mv = memoryview(bytearray(512))

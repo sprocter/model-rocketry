@@ -113,7 +113,7 @@ if _RESOLUTION == 1:
 elif _RESOLUTION == 2:
     _ALTI_SAMPLERATE_HZ = 50
 elif _RESOLUTION == 3:
-    _ALTI_SAMPLERATE_HZ = 100
+    _ALTI_SAMPLERATE_HZ = 25
 else:
     print("Resolution must be between 1 and 3.")
     exit()
@@ -294,7 +294,7 @@ def main_loop(dir_name: str) -> None:
             decode_raw_data(accel_data, alti_data, accelerometer, altimeter)
             write_bokeh_files(accelerometer, altimeter, launch.name)
             print(
-                f"Launch {launch.name}: {max(altimeter.relative_altitudes.values()):.2f}ft AGL, {max(altimeter.speeds.values()):.2f}mph, {max(accelerometer.accel.values()):.2f}gs"
+                f"Launch {launch.name}: {max(smooth(list(altimeter.relative_altitudes.values()))):.2f}ft, {max(smooth(list(altimeter.speeds.values()))):.2f}mph, {max(smooth(list(accelerometer.accel.values()))):.2f}gs"
             )
         except Exception as e:
             print("Problem decoding launch", launch)
