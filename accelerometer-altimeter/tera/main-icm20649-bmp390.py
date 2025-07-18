@@ -293,6 +293,9 @@ def main_loop(dir_name: str) -> None:
         try:
             decode_raw_data(accel_data, alti_data, accelerometer, altimeter)
             write_bokeh_files(accelerometer, altimeter, launch.name)
+            print(
+                f"Launch {launch.name}: {max(altimeter.relative_altitudes.values()):.2f}ft AGL, {max(altimeter.speeds.values()):.2f}mph, {max(accelerometer.accel.values()):.2f}gs"
+            )
         except Exception as e:
             print("Problem decoding launch", launch)
             print_exception(e)
