@@ -23,22 +23,24 @@ from bmp280 import BMP280
 
 import time, gc, machine, network, esp32, ftp, json
 
-_MODE_LAUNCHPAD = const(0)
-_MODE_ASCENT = const(1)
-_MODE_DESCENT = const(2)
-_MODE_TOUCHDOWN = const(3)
-_MODE_FINISHED = const(4)
+_MODE_INITIALIZE = const(0)
+_MODE_LAUNCHPAD = const(1)
+_MODE_ASCENT = const(2)
+_MODE_DESCENT = const(3)
+_MODE_TOUCHDOWN = const(4)
+_MODE_FINISHED = const(5)
+_MODE_WIFI = const(6)
 
 _SENSOR_FREQ_HZ = const(25)
-_PRE_LAUNCH_TIME_SEC = const(3)
-_GROUND_READINGS = const(_PRE_LAUNCH_TIME_SEC * _SENSOR_FREQ_HZ)
 
-_READING_COUNT = const(19)  # 1 timestamp, 18 sensor readings
+# Number of seconds to record before launch / after touchdown
+_INITIAL_FINAL_TIME_SEC = const(3)
+
+_LAUNCHPAD_READINGS = const(_INITIAL_FINAL_TIME_SEC * _SENSOR_FREQ_HZ)
+
+_READING_COUNT = const(12)  # See `SensorReading` namedtuple
 _READING_SIZE = const(4 * _READING_COUNT)  # 4 bytes per int (timestamp) & float
 _RINGIO_SIZE = const(5 * _READING_SIZE)  # Store up to 5 readings
-
-_BIG_BUDDY_ADDR = const(110)
-_LITTLE_BUDDY_ADDR = const(148)
 
 # How far above ground level / below apogee we should be before confirming mode change
 _ALTITUDE_DIFFERENCE = const(20)
@@ -50,20 +52,25 @@ _RECENT_READINGS = const(5)
 _CONFIRMATORY_READINGS = const(4)
 
 # LED Control #
-_NEOPIXEL_BRIGHTNESS = const(10)  # 1-255
-_NEOPIXEL_OFF = (0, 0, 0)
-#                                             # LED Meaning:
-_NEOPIXEL_RED = (_NEOPIXEL_BRIGHTNESS, 0, 0)  # Initialization
-_NEOPIXEL_ORA = (_NEOPIXEL_BRIGHTNESS, _NEOPIXEL_BRIGHTNESS // 2, 0)  # Ascent
-_NEOPIXEL_GRN = (0, _NEOPIXEL_BRIGHTNESS, 0)  # Touchdown
-_NEOPIXEL_CYA = (0, _NEOPIXEL_BRIGHTNESS, _NEOPIXEL_BRIGHTNESS)  # Descent
-_NEOPIXEL_BLU = (0, 0, _NEOPIXEL_BRIGHTNESS)  # Done
-_NEOPIXEL_PUR = (_NEOPIXEL_BRIGHTNESS // 2, 0, _NEOPIXEL_BRIGHTNESS)  # WiFi
-_NEOPIXEL_WHT = (
-    _NEOPIXEL_BRIGHTNESS,
-    _NEOPIXEL_BRIGHTNESS,
-    _NEOPIXEL_BRIGHTNESS,
-)  # Launchpad
+_NPXL_BRIGHTNESS = const(10)  # 1-255
+_NPXL_OFF = (0, 0, 0)
+_NPXL_WHT = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
+_NPXL_RED = (_NPXL_BRIGHTNESS, 0, 0)
+_NPXL_ORA = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS // 2, 0)
+_NPXL_GRN = (0, _NPXL_BRIGHTNESS, 0)
+_NPXL_CYA = (0, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
+_NPXL_BLU = (0, 0, _NPXL_BRIGHTNESS)
+_NPXL_PUR = (_NPXL_BRIGHTNESS // 2, 0, _NPXL_BRIGHTNESS)
+
+_MODE_TO_LED = {
+    _MODE_INITIALIZE: _NPXL_WHT,
+    _MODE_LAUNCHPAD: _NPXL_RED,
+    _MODE_ASCENT: _NPXL_ORA,
+    _MODE_DESCENT: _NPXL_GRN,
+    _MODE_TOUCHDOWN: _NPXL_CYA,
+    _MODE_FINISHED: _NPXL_BLU,
+    _MODE_WIFI: _NPXL_PUR,
+}
 
 boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
 
@@ -73,22 +80,15 @@ SensorReading = namedtuple(
         "timestamp",
         "altitude",
         "temperature",
-        "lin_acc_x",
-        "lin_acc_y",
-        "lin_acc_z",
-        "mag_x",
-        "mag_y",
-        "mag_z",
+        "acc_x",
+        "acc_y",
+        "acc_z",
         "gyro_x",
         "gyro_y",
         "gyro_z",
-        "euler_heading",
-        "euler_roll",
-        "euler_pitch",
-        "quaternion_w",
-        "quaternion_x",
-        "quaternion_y",
-        "quaternion_z",
+        "mag_x",
+        "mag_y",
+        "mag_z",
     ),
 )
 
@@ -137,7 +137,7 @@ def button_handler(boot_button: Pin) -> None:
 
 
 def enable_buzzer() -> None:
-    global p1, p2
+    global p1, p2, buzzer_timer
     buzzer_timer = Timer(3)
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
     p1 = PWM(Pin(18), freq=4800, duty_u16=32768)
@@ -145,6 +145,7 @@ def enable_buzzer() -> None:
 
 
 def enable_sensor_recording() -> None:
+    global sensor_reading_timer
     sensor_reading_timer = Timer(0)
     sensor_reading_timer.init(
         mode=Timer.PERIODIC, freq=25, callback=get_sensor_readings
@@ -152,6 +153,7 @@ def enable_sensor_recording() -> None:
 
 
 def enable_radio() -> None:
+    global radio_timer
     radio_timer = Timer(2)
     radio_timer.init(mode=Timer.PERIODIC, period=10000, callback=send_radio_message)
 
@@ -161,74 +163,90 @@ def process_reading(arg=None) -> None:
     if unstored_readings.any() < _READING_SIZE:
         return
     packed_reading = unstored_readings.read(_READING_SIZE)
-    unpacked_reading = SensorReading(*unpack(">iffffffffffffffffff", packed_reading))
+    unpacked_reading = SensorReading(*unpack(">ifffffffffff", packed_reading))
     if mode == _MODE_ASCENT and unpacked_reading.altitude > apogee:
         apogee = unpacked_reading.altitude
     recent_altis.append(unpacked_reading.altitude)
     if mode == _MODE_LAUNCHPAD:
-        ground_readings.append(unpacked_reading)
-    else:
+        ground_readings.append(packed_reading)
+    elif mode == _MODE_ASCENT or mode == _MODE_DESCENT:
         nvs.set_blob(str(reading_num), packed_reading)
         reading_num += 1
 
 
 def update_mode(recent_altis: deque) -> None:
     global mode
-    # Mid-air reboots happen, unfortunately. We don't want to lose data
     if mode == _MODE_LAUNCHPAD and have_liftoff(recent_altis, initial_altitude):
-        mode = _MODE_ASCENT
         ascent()
     elif (mode == _MODE_ASCENT or mode == _MODE_LAUNCHPAD) and started_descent(
         recent_altis, apogee
     ):
-        mode = _MODE_DESCENT
+        # We can go straight to descent from launchpad mode because mid-air reboots happen, unfortunately. We don't want to lose data.
         descent()
     elif mode == _MODE_DESCENT and touched_down(recent_altis, apogee, initial_altitude):
-        mode = _MODE_TOUCHDOWN
         touchdown()
 
 
 def send_message(arg=None) -> None:
-    lora.send("testing...", _BIG_BUDDY_ADDR)
+    lora.send("testing...", secrets["bigbuddy-addr"])
 
 
 def take_readings(timestamp: int) -> bytes:
     mag = imu.mag()
-    lin_acc = imu.lin_acc()
+    acc = imu.lin_acc()
     gyro = imu.gyro()
-    euler = imu.euler()
-    temp2 = bmp.temperature
+    temp = bmp.temperature
     alti = bmp.altitude
-    quaternion = imu.quaternion()
     b = pack(
-        ">iffffffffffffffffff",
+        ">ifffffffffff",
         *[
             timestamp,
             alti,
-            lin_acc[0],
-            lin_acc[1],
-            lin_acc[2],
-            temp2,
-            mag[0],
-            mag[1],
-            mag[2],
+            temp,
+            acc[0],
+            acc[1],
+            acc[2],
             gyro[0],
             gyro[1],
             gyro[2],
-            euler[0],
-            euler[1],
-            euler[2],
-            quaternion[0],
-            quaternion[1],
-            quaternion[2],
-            quaternion[3],
+            mag[0],
+            mag[1],
+            mag[2],
         ],
     )
     return b
 
 
+def _update_neopixel() -> None:
+    neopixel[0] = _MODE_TO_LED[mode]
+    neopixel.write()
+
+
+def _initialize_nvs() -> None:
+    """Creates a new NVS namespace in the "nvs" global variable
+
+    This sets the `nvs` global variable to an instance of the "Non-Volatile Storage" class. This is ESP-specific functionality that implements a flash-backed keystore. The instance will be configured with a new / empty (except for a sentinel value) namespace. It will also set the `launch_num` variable so the file i/o stuff knows which launch number this was.
+    """
+    global nvs, launch_num
+    # There seems to be no way to check if a namespace exists, so we just check
+    # for a sentinel value until we get an OSError. I don't love using
+    # exceptions for control flow, but here we are.
+    launch_num = 1
+    while True:
+        try:
+            nvs = esp32.NVS(str(launch_num))
+            nvs.get_i32(str(f"namespace {launch_num}"))
+        except OSError:
+            nvs.set_i32(str(f"namespace {launch_num}"), launch_num)
+            nvs.commit()
+            break
+        launch_num += 1
+
+
 def initialize():
-    global mode, imu, bmp, unstored_readings, nvs, reading_num, lora, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time
+    global mode, imu, bmp, unstored_readings, reading_num, lora, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
+
+    mode = _MODE_INITIALIZE
 
     # Status LEDs #
     neopixel_pwr_pin = Pin(38, Pin.OUT)
@@ -236,13 +254,16 @@ def initialize():
     neopixel_pin = Pin(39, Pin.OUT)
     neopixel = NeoPixel(neopixel_pin, 1)
 
-    neopixel[0] = _NEOPIXEL_RED  # type: ignore
-    neopixel.write()
-
-    mode = _MODE_LAUNCHPAD
+    _update_neopixel()
 
     launch_time_ms = time.ticks_ms()
     debounce_time = launch_time_ms
+    init_time = launch_time_ms
+
+    vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
+
+    with open("/secrets.json", "r") as f:
+        secrets = json.loads(f.read())
 
     i2c = I2C(scl=6, sda=7)
 
@@ -252,13 +273,12 @@ def initialize():
 
     unstored_readings = RingIO(_RINGIO_SIZE)
 
-    # TODO: Namespace rotation
-    nvs = esp32.NVS("SammyNamespace")
+    _initialize_nvs()
 
     lora = LoRa(
         spi_channel=SPIConfig.esp32s3_1,
         interrupt=16,
-        this_address=_LITTLE_BUDDY_ADDR,
+        this_address=secrets["lilbuddy-addr"],
         cs_pin=5,
         reset_pin=8,
         freq=915.0,
@@ -271,9 +291,17 @@ def initialize():
 
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
 
-    reading_num = _GROUND_READINGS + 1
+    reading_num = _LAUNCHPAD_READINGS + 1
     initial_altitude = bmp.altitude
     apogee = initial_altitude
+
+    mode = _MODE_LAUNCHPAD
+    _update_neopixel()
+
+    ground_readings = deque([], _LAUNCHPAD_READINGS)
+    recent_altis = deque([], _RECENT_READINGS)
+    gc.collect()
+    enable_sensor_recording()
 
 
 def have_liftoff(recent_altis: deque, ground_level: float) -> bool:
@@ -298,26 +326,18 @@ def touched_down(recent_altis: deque, apogee: float, ground_level: float) -> boo
     return abs(variance) < 0.001
 
 
-def launchpad(initial_altitude: float) -> tuple[list, int]:
-    global ground_readings, recent_altis
-    neopixel[0] = _NEOPIXEL_WHT  # type: ignore
-    neopixel.write()
-    ground_readings = deque([], _GROUND_READINGS)
-    recent_altis = deque([], _RECENT_READINGS)
-    enable_sensor_recording()
-    time.sleep(5)
-
-
 def ascent() -> None:
+    global launch_time_ms, mode
     # Nothing really to do here -- sensors are already on, and the switch to NVS is handled by the process_reading function
-    neopixel[0] = _NEOPIXEL_ORA  # type: ignore
-    neopixel.write()
-    pass
+    launch_time_ms = time.ticks_ms()
+    mode = _MODE_ASCENT
+    _update_neopixel()
 
 
 def descent() -> None:
-    neopixel[0] = _NEOPIXEL_CYA  # type: ignore
-    neopixel.write()
+    global mode
+    mode = _MODE_DESCENT
+    _update_neopixel()
     enable_buzzer()
     enable_radio()
 
@@ -325,32 +345,118 @@ def descent() -> None:
 def share_files(arg=None) -> None:
     """Turns on wifi and an FTP server
 
-    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "wifi.txt"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
+    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
     """
-    neopixel[0] = _NEOPIXEL_PUR  # type: ignore
-    neopixel.write()
-    # TODO: Disable buzzer and radio
-    with open("/wifi.txt", "r") as f:
-        wifi = json.loads(f.read())
+    global mode
+    mode = _MODE_WIFI
+    _update_neopixel()
+
+    radio_timer.deinit()
+    lora.sleep()
+    lora.close()
+    buzzer_timer.deinit()
+    p1.deinit()
+    p2.deinit()
+
     ap_if = network.WLAN(network.AP_IF)
     ap_if.active(True)
     time.sleep_ms(10)  # Give things a chance to settle
-    ap_if.config(ssid=wifi["ssid"], security=3, key=wifi["key"])
+    ap_if.config(ssid=secrets["wifi-ssid"], security=3, key=secrets["wifi-key"])
     ftp.ftpserver()
+
+
+def _write_initial_data() -> None:
+    time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
+    adjusted_ground_readings = []
+    while len(ground_readings) > 0:
+        entry = ground_readings.popleft()
+        unpacked = list(unpack(">ifffffffffff", entry))
+        unpacked[0] = unpacked[0] - time_offset_ms
+        adjusted_ground_readings.append(pack(">ifffffffffff", *unpacked))
+    header_str = "timestamp, altitude, temperature, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z\n"
+    _write_data(list(adjusted_ground_readings), header_str)
+
+
+def _write_nvs_data() -> None:
+    first_entry = _LAUNCHPAD_READINGS + 1
+    if reading_num - first_entry > 100:
+        last_entry = first_entry + 100
+    else:
+        last_entry = reading_num
+
+    while True:
+        packed_readings = []
+        for i in range(first_entry, last_entry):
+            packed_readings.append(bytearray(_READING_SIZE))
+            nvs.get_blob(str(i), packed_readings[-1])
+
+        _write_data(packed_readings)
+
+        if last_entry != reading_num:
+            first_entry = last_entry
+            if reading_num - first_entry > 100:
+                last_entry = first_entry + 100
+            else:
+                last_entry = reading_num
+        else:
+            break
+
+
+def _write_data(
+    packed_readings: list[bytearray], header_str: Optional[str] = None
+) -> None:
+    with open(f"launch-{launch_num}.csv", "at") as f:
+        if header_str is not None:
+            f.write(header_str)
+        for packed_reading in packed_readings:
+            f.write(
+                ", ".join(str(x) for x in unpack(">ifffffffffff", packed_reading))
+                + "\n"
+            )
+
+
+def _wipe_nvs_namespace() -> None:
+    """Wipe all sensor readings from non-volatile storage to save space.
+
+    This removes all sensor readings from non-volatile storage (NVS). Note that it leaves the sentinel value so this launch's namespace will not be re-used. This avoids filename conflicts since we use the launch number in both the namespace and final csv filename.
+    """
+    first_entry = _LAUNCHPAD_READINGS + 1
+    last_entry = reading_num
+    for i in range(first_entry, last_entry):
+        if i % 100 == 0:
+            # Things seem to bog down with longer erases, I'm not sure why
+            nvs.commit()
+            gc.collect()
+            time.sleep(1)
+        nvs.erase_key(str(i))
 
 
 def touchdown() -> None:
     global mode
-    neopixel[0] = _NEOPIXEL_GRN  # type: ignore
-    neopixel.write()
-    # TODO: Store initial data in a file
-    # TODO: Move / convert data from NVS to the file
-    # TODO: Erase NVS? Or nah
+
+    # Wait a final few seconds then remove timer and turn off sensors
+    time.sleep(_INITIAL_FINAL_TIME_SEC)
+    mode = _MODE_TOUCHDOWN
+    _update_neopixel()
+
+    sensor_reading_timer.deinit()
+    # # TODO: Turn off imu when driver is rewritten
+    bmp.power_mode = 0
+
+    gc.collect()
+
+    _write_initial_data()
+    _write_nvs_data()
+    startwipe = time.ticks_ms()
+    _wipe_nvs_namespace()
+    print(f"Erase took {time.ticks_diff(time.ticks_ms(), startwipe)}ms.")
+
     mode = _MODE_FINISHED
-    neopixel[0] = _NEOPIXEL_BLU  # type: ignore
-    neopixel.write()
+    _update_neopixel()
 
 
 initialize()
-time.sleep(2)
-initial_data, initial_data_idx = launchpad(initial_altitude)
+time.sleep(10)
+ascent()
+time.sleep(90)
+touchdown()

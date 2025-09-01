@@ -15,19 +15,12 @@ from machine import I2C, Pin, Signal
 from sh1107 import SH1107_I2C
 from max17048 import MAX17048
 from ulora import LoRa, ModemConfig, SPIConfig
-import time
+import time, json
 
 MODE_INITIAL = const(0)
 MODE_BATTERY = const(1)
 MODE_LORA = const(2)
 MODE_C = const(3)
-
-last_time = time.ticks_ms()
-mode = MODE_INITIAL
-
-button_A = Pin(9, Pin.IN, Pin.PULL_UP)
-button_B = Pin(6, Pin.IN, Pin.PULL_UP)
-button_C = Pin(5, Pin.IN, Pin.PULL_UP)
 
 
 def listen_for_msgs(payload):
@@ -41,27 +34,6 @@ def listen_for_msgs(payload):
 
 def ignore_msgs(payload):
     pass
-
-
-i2c = I2C(scl=4, sda=3)
-
-display = SH1107_I2C(128, 64, i2c, address=0x3C, rotate=180)
-display.contrast(0xFF)
-charger = MAX17048(i2c)
-
-lora = LoRa(
-    spi_channel=SPIConfig.esp32s3_1,
-    interrupt=10,
-    this_address=110,
-    cs_pin=11,
-    reset_pin=8,
-    freq=915.0,
-    tx_power=5,
-    modem_config=ModemConfig.USLegalLongRange,
-    receive_all=False,
-    acks=False,
-    crypto=None,
-)
 
 
 def show(line1: str, line2: str) -> None:
@@ -113,6 +85,36 @@ def handleC(button_C):
     mode = MODE_C
     show("Button", "C")
 
+
+with open("/secrets.json", "r") as f:
+    secrets = json.loads(f.read())
+
+last_time = time.ticks_ms()
+mode = MODE_INITIAL
+
+button_A = Pin(9, Pin.IN, Pin.PULL_UP)
+button_B = Pin(6, Pin.IN, Pin.PULL_UP)
+button_C = Pin(5, Pin.IN, Pin.PULL_UP)
+
+i2c = I2C(scl=4, sda=3)
+
+display = SH1107_I2C(128, 64, i2c, address=0x3C, rotate=180)
+display.contrast(0xFF)
+charger = MAX17048(i2c)
+
+lora = LoRa(
+    spi_channel=SPIConfig.esp32s3_1,
+    interrupt=10,
+    this_address=secrets["bigbuddy-addr"],
+    cs_pin=11,
+    reset_pin=8,
+    freq=915.0,
+    tx_power=5,
+    modem_config=ModemConfig.USLegalLongRange,
+    receive_all=False,
+    acks=False,
+    crypto=None,
+)
 
 button_A.irq(trigger=Pin.IRQ_FALLING, handler=handleA)
 button_B.irq(trigger=Pin.IRQ_FALLING, handler=handleB)
