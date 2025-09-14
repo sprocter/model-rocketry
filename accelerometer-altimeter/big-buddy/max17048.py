@@ -1,4 +1,4 @@
-"""A very (very!) simple driver for the MAX17048 chip
+"""A very (very!) simple driver for the MAX17048 Battery Monitor
 
 --------------------------------------------------------------------------------
 Copyright (C) 2025 Sam Procter
