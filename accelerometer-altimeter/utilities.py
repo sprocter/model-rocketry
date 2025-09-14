@@ -1,5 +1,7 @@
-import json, vfs, os, esp32, machine
+import json, vfs, os, esp32, machine, time
 from random import randint
+from machine import I2C
+from adxl375 import ADXL375
 
 
 def generate_secrets():
@@ -43,4 +45,27 @@ def print_filesystem_space():
     print("Free : {:,} bytes, {:,} KB, {} MB".format(free, free / KB, free / MB))
 
 
-print_filesystem_space()
+def print_accel_offsets():
+    i2c = I2C(sda=41, scl=40)
+    accelerometer = ADXL375(i2c)
+    accelerometer.initialize()
+    xs, ys, zs = [], [], []
+    print("Please ensure X, Y, and Z ERR constants are set to 0 in the ADXL375 Driver")
+    print("Set the device face-up on a flat surface and hold it still.")
+    print("Calibration begins in five seconds.")
+    time.sleep(5)
+    print("Calibration beginning now, it will take 10 seconds...")
+    for _ in range(250):
+        accelerometer.read_raw()
+        accel_reading = accelerometer.decode_reading(accelerometer.buffer)
+        xs.append(accel_reading[0])
+        ys.append(accel_reading[1])
+        zs.append(accel_reading[2])
+        time.sleep_ms(40)
+
+    print("_X_ERR = ", sum(xs) / len(xs))
+    print("_Y_ERR = ", sum(ys) / len(ys))
+    print("_Z_ERR = ", sum(zs) / len(zs) - 1)
+
+
+print_accel_offsets()

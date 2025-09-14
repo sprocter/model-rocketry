@@ -23,8 +23,11 @@ _ADXL375_BW_RATE = const(0x2C)
 _ADXL375_POWER_CTL = const(0x2D)
 _ADXL375_DATAX0 = const(0x32)
 
-_SCALE_FACTOR = const(0.049)
-_EXPECTED_DEVICE_ID = const(0xE5)
+_SCALE_FACTOR = const(0.049)  # Datasheet pg 3, Tbl 1
+_X_ERR = const(0.0793798)  # From print_accel_offsets() in utilities.py
+_Y_ERR = const(-0.2010956)  # From print_accel_offsets() in utilities.py
+_Z_ERR = const(-0.5096079)  # From print_accel_offsets() in utilities.py
+_EXPECTED_DEVICE_ID = const(0xE5)  # Datasheet pg 21
 
 
 class ADXL375:
@@ -51,8 +54,8 @@ class ADXL375:
 
     def decode_reading(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
-        return (  # TODO: Add offsets / method to get offsets
-            unpacked_reading[0] * _SCALE_FACTOR,
-            unpacked_reading[1] * _SCALE_FACTOR,
-            unpacked_reading[2] * _SCALE_FACTOR,
+        return (
+            unpacked_reading[0] * _SCALE_FACTOR - _X_ERR,
+            unpacked_reading[1] * _SCALE_FACTOR - _Y_ERR,
+            unpacked_reading[2] * _SCALE_FACTOR - _Z_ERR,
         )
