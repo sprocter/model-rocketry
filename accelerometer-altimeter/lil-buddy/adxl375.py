@@ -18,7 +18,7 @@ import time
 
 _ADXL375_ADDR = const(0x53)
 
-_ADXL_DEVID = const(0x00)
+_ADXL375_DEVID = const(0x00)
 _ADXL375_BW_RATE = const(0x2C)
 _ADXL375_POWER_CTL = const(0x2D)
 _ADXL375_DATAX0 = const(0x32)
@@ -40,7 +40,7 @@ class ADXL375:
         if _ADXL375_ADDR not in self.i2c.scan():
             raise OSError(f"ADXL375 not found at {_ADXL375_ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(_ADXL375_ADDR, _ADXL_DEVID, 1)
+            "<B", self.i2c.readfrom_mem(_ADXL375_ADDR, _ADXL375_DEVID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
