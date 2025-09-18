@@ -16,10 +16,11 @@ from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque, namedtuple
 from micropython import RingIO, schedule
+from math import sqrt
 
-from ulora import LoRa, ModemConfig, SPIConfig
-from bno055 import BNO055
-from bmp280 import BMP280
+from bmp581 import BMP581
+from adxl375 import ADXL375
+from sx1262 import SX1262
 
 import time, gc, machine, network, esp32, ftp, json
 
@@ -37,10 +38,6 @@ _SENSOR_FREQ_HZ = const(25)
 _INITIAL_FINAL_TIME_SEC = const(3)
 
 _LAUNCHPAD_READINGS = const(_INITIAL_FINAL_TIME_SEC * _SENSOR_FREQ_HZ)
-
-_READING_COUNT = const(12)  # See `SensorReading` namedtuple
-_READING_SIZE = const(4 * _READING_COUNT)  # 4 bytes per int (timestamp) & float
-_RINGIO_SIZE = const(5 * _READING_SIZE)  # Store up to 5 readings
 
 # How far above ground level / below apogee we should be before confirming mode change
 _ALTITUDE_DIFFERENCE = const(20)
@@ -74,25 +71,6 @@ _MODE_TO_LED = {
 
 boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
 
-SensorReading = namedtuple(
-    "SensorReading",
-    (
-        "timestamp",
-        "altitude",
-        "temperature",
-        "acc_x",
-        "acc_y",
-        "acc_z",
-        "gyro_x",
-        "gyro_y",
-        "gyro_z",
-        "mag_x",
-        "mag_y",
-        "mag_z",
-    ),
-)
-
-
 ####################################
 # BEGIN Interrupt Service Routines #
 ####################################
@@ -109,12 +87,21 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
-    global unstored_readings, launch_time_ms
-    # TODO: Write custom getter that burst reads relevant values
-    unstored_readings.write(
-        take_readings(time.ticks_diff(time.ticks_ms(), launch_time_ms))
+    alti.read_raw()
+    accel.read_raw()
+
+    # unstored_readings.write(time.ticks_diff(time.ticks_ms(), launch_time_ms).to_bytes(3, "little"))
+    # unstored_readings.write(alti.buffer)
+    # unstored_readings.write(accel.buffer)
+
+    schedule(
+        process_reading,
+        (
+            time.ticks_diff(time.ticks_ms(), launch_time_ms).to_bytes(3, "little"),
+            alti.buffer,
+            accel.buffer,
+        ),
     )
-    schedule(process_reading, None)
 
 
 def send_radio_message(timer: Timer) -> None:
@@ -158,15 +145,16 @@ def enable_radio() -> None:
     radio_timer.init(mode=Timer.PERIODIC, period=10000, callback=send_radio_message)
 
 
-def process_reading(arg=None) -> None:
+def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     global nvs, reading_num, recent_altis, apogee
-    if unstored_readings.any() < _READING_SIZE:
-        return
-    packed_reading = unstored_readings.read(_READING_SIZE)
-    unpacked_reading = SensorReading(*unpack(">ifffffffffff", packed_reading))
-    if mode == _MODE_ASCENT and unpacked_reading.altitude > apogee:
-        apogee = unpacked_reading.altitude
-    recent_altis.append(unpacked_reading.altitude)
+    timestamp = int.from_bytes(reading[0], "little")
+    altitude = alti.decode_reading(reading[1]) - initial_altitude
+    (acc_x, acc_y, acc_z) = accel.decode_reading(reading[2])
+    acc = sqrt(acc_x**2 + acc_y**2 + acc_z**2)
+    packed_reading = pack(">ifffff", timestamp, altitude, acc, acc_x, acc_y, acc_z)
+    if mode == _MODE_ASCENT and altitude > apogee:
+        apogee = altitude
+    recent_altis.append(altitude)
     if mode == _MODE_LAUNCHPAD:
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT:
@@ -189,32 +177,6 @@ def update_mode(recent_altis: deque) -> None:
 
 def send_message(arg=None) -> None:
     lora.send("testing...", secrets["bigbuddy-addr"])
-
-
-def take_readings(timestamp: int) -> bytes:
-    mag = imu.mag()
-    acc = imu.lin_acc()
-    gyro = imu.gyro()
-    temp = bmp.temperature
-    alti = bmp.altitude
-    b = pack(
-        ">ifffffffffff",
-        *[
-            timestamp,
-            alti,
-            temp,
-            acc[0],
-            acc[1],
-            acc[2],
-            gyro[0],
-            gyro[1],
-            gyro[2],
-            mag[0],
-            mag[1],
-            mag[2],
-        ],
-    )
-    return b
 
 
 def _update_neopixel() -> None:
@@ -243,8 +205,18 @@ def _initialize_nvs() -> None:
         launch_num += 1
 
 
+def _init_sensors() -> None:
+    global accel, alti
+    i2c = I2C(scl=40, sda=41)
+    accel = ADXL375(i2c)
+    alti = BMP581(i2c)
+
+    accel.initialize()
+    alti.initialize()
+
+
 def initialize():
-    global mode, imu, bmp, unstored_readings, reading_num, lora, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
+    global mode, unstored_readings, reading_num, lora, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
 
     mode = _MODE_INITIALIZE
 
@@ -265,34 +237,17 @@ def initialize():
     with open("/secrets.json", "r") as f:
         secrets = json.loads(f.read())
 
-    i2c = I2C(scl=6, sda=7)
-
-    imu = BNO055(i2c)
-    bmp = BMP280(i2c, 0x77)
-    # TODO: Initialize / configure / calibrate sensors?
-
-    unstored_readings = RingIO(_RINGIO_SIZE)
+    _init_sensors()
 
     _initialize_nvs()
 
-    lora = LoRa(
-        spi_channel=SPIConfig.esp32s3_1,
-        interrupt=16,
-        this_address=secrets["lilbuddy-addr"],
-        cs_pin=5,
-        reset_pin=8,
-        freq=915.0,
-        tx_power=5,
-        modem_config=ModemConfig.USLegalLongRange,
-        receive_all=False,
-        acks=False,
-        crypto=None,
-    )
+    lora = SX1262(1, 2, 3, 4, 5, 6, 7, 8)
 
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
 
     reading_num = _LAUNCHPAD_READINGS + 1
-    initial_altitude = bmp.altitude
+    alti.read_raw()
+    initial_altitude = alti.decode_reading(alti.buffer)
     apogee = initial_altitude
 
     mode = _MODE_LAUNCHPAD
@@ -301,6 +256,7 @@ def initialize():
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
     gc.collect()
+    print(gc.mem_free())
     enable_sensor_recording()
 
 
@@ -352,8 +308,6 @@ def share_files(arg=None) -> None:
     _update_neopixel()
 
     radio_timer.deinit()
-    lora.sleep()
-    lora.close()
     buzzer_timer.deinit()
     p1.deinit()
     p2.deinit()
@@ -370,10 +324,10 @@ def _write_initial_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">ifffffffffff", entry))
+        unpacked = list(unpack(">ifffff", entry))
         unpacked[0] = unpacked[0] - time_offset_ms
-        adjusted_ground_readings.append(pack(">ifffffffffff", *unpacked))
-    header_str = "timestamp, altitude, temperature, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z\n"
+        adjusted_ground_readings.append(pack(">ifffff", *unpacked))
+    header_str = "timestamp, altitude, acceleration, acc_x, acc_y, acc_z\n"
     _write_data(list(adjusted_ground_readings), header_str)
 
 
@@ -387,7 +341,7 @@ def _write_nvs_data() -> None:
     while True:
         packed_readings = []
         for i in range(first_entry, last_entry):
-            packed_readings.append(bytearray(_READING_SIZE))
+            packed_readings.append(bytearray(24))
             nvs.get_blob(str(i), packed_readings[-1])
 
         _write_data(packed_readings)
@@ -409,10 +363,7 @@ def _write_data(
         if header_str is not None:
             f.write(header_str)
         for packed_reading in packed_readings:
-            f.write(
-                ", ".join(str(x) for x in unpack(">ifffffffffff", packed_reading))
-                + "\n"
-            )
+            f.write(", ".join(str(x) for x in unpack(">ifffff", packed_reading)) + "\n")
 
 
 def _wipe_nvs_namespace() -> None:
@@ -440,8 +391,7 @@ def touchdown() -> None:
     _update_neopixel()
 
     sensor_reading_timer.deinit()
-    # # TODO: Turn off imu when driver is rewritten
-    bmp.power_mode = 0
+    # # TODO: Add shutoff to sensors?
 
     gc.collect()
 
@@ -456,7 +406,7 @@ def touchdown() -> None:
 
 
 initialize()
-time.sleep(10)
+time.sleep(5)
 ascent()
-time.sleep(90)
+time.sleep(10)
 touchdown()
