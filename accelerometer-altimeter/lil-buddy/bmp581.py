@@ -33,6 +33,7 @@ class BMP581:
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(3)
+        self.addr = _BMP581_ADDR
 
     def initialize(self) -> None:
         if _BMP581_ADDR not in self.i2c.scan():

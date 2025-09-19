@@ -11,18 +11,19 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-from machine import PWM, Pin, I2C, Timer
+from machine import PWM, Pin, I2C, Timer, RTC
 from struct import pack, unpack
 from neopixel import NeoPixel
-from collections import deque, namedtuple
-from micropython import RingIO, schedule
+from collections import deque
+from micropython import schedule
 from math import sqrt
 
 from bmp581 import BMP581
 from adxl375 import ADXL375
+from pa1010 import PA1010
 from sx1262 import SX1262
 
-import time, gc, machine, network, esp32, ftp, json
+import time, gc, machine, network, esp32, ftp, json, binascii
 
 _MODE_INITIALIZE = const(0)
 _MODE_LAUNCHPAD = const(1)
@@ -68,6 +69,8 @@ _MODE_TO_LED = {
     _MODE_FINISHED: _NPXL_BLU,
     _MODE_WIFI: _NPXL_PUR,
 }
+
+_GPS_CONNECTED = False
 
 boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
 
@@ -176,7 +179,7 @@ def update_mode(recent_altis: deque) -> None:
 
 
 def send_message(arg=None) -> None:
-    lora.send("testing...", secrets["bigbuddy-addr"])
+    radio.send("testing...", secrets["bigbuddy-addr"])
 
 
 def _update_neopixel() -> None:
@@ -205,18 +208,79 @@ def _initialize_nvs() -> None:
         launch_num += 1
 
 
-def _init_sensors() -> None:
-    global accel, alti
+def _init_devices() -> None:
+    global accel, alti, gps, radio, clock, _GPS_CONNECTED
     i2c = I2C(scl=40, sda=41)
+    connected_devices = i2c.scan()
+
     accel = ADXL375(i2c)
     alti = BMP581(i2c)
+    radio = SX1262(1, 36, 35, 37, 8, 18, 9, 17)
 
-    accel.initialize()
+    if accel.addr in connected_devices:
+        accel.initialize()
+    # if PA1010.I2C_ADDR in connected_devices:
+    #     _GPS_CONNECTED = True
+    #     clock = RTC()
+    #     gps = PA1010(i2c)
+    #     gps.set_update_rate(1)
+    #     while not gps.update():
+    #         print("GPS: No fix!")
+    #         time.sleep(5)
+    #     gps.update()  # We have a fix but it could be up to 5s outdated
+    #     clock.init(
+    #         (
+    #             gps.year,
+    #             gps.month,
+    #             gps.day,
+    #             gps.hour,
+    #             gps.minute,
+    #             gps.second,
+    #             0,  # microsecond, ignored
+    #             0,  # tzinfo, ignored
+    #         )
+    #     )
     alti.initialize()
+
+    frequency = 917.0
+    bandwidth = 62.5
+    spreading_factor = 10
+    coding_rate = 8
+    sync_word = 0x12  # private
+    tx_power = -5
+    mA_limit = 125.0
+    use_CRC = True
+    radio_status = radio.begin(
+        freq=frequency,
+        bw=bandwidth,
+        sf=spreading_factor,
+        cr=coding_rate,
+        syncWord=sync_word,
+        power=tx_power,
+        currentLimit=mA_limit,
+        crcOn=use_CRC,
+    )
+    hdr_to = secrets["bigbuddy-addr"]
+    hdr_from = secrets["lilbuddy-addr"]
+    hdr_id = 0x00
+    hdr_flags = 0x42
+    hdr = bytearray(4)
+    hdr[0] = hdr_to
+    hdr[1] = hdr_from
+    hdr[2] = hdr_id
+    hdr[3] = hdr_flags
+    radio.explicitHeader()
+    print(f"Radio Status (0 = No Error?) {radio_status}")
+    while True:
+        # radio.send(binascii.hexlify("hi"))
+        radio.send(hdr + b"bye.")
+        print("Message sent.")
+        time.sleep(10)
+    raise OSError
 
 
 def initialize():
-    global mode, unstored_readings, reading_num, lora, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
+    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
 
     mode = _MODE_INITIALIZE
 
@@ -237,11 +301,9 @@ def initialize():
     with open("/secrets.json", "r") as f:
         secrets = json.loads(f.read())
 
-    _init_sensors()
+    _init_devices()
 
     _initialize_nvs()
-
-    lora = SX1262(1, 2, 3, 4, 5, 6, 7, 8)
 
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
 
@@ -250,13 +312,16 @@ def initialize():
     initial_altitude = alti.decode_reading(alti.buffer)
     apogee = initial_altitude
 
+    ground_readings = deque([], _LAUNCHPAD_READINGS)
+    recent_altis = deque([], _RECENT_READINGS)
+
+    gc.collect()
+    print(f"Free: {gc.mem_free()}")
+    print(f"Allocated: {gc.mem_alloc()}")
+
     mode = _MODE_LAUNCHPAD
     _update_neopixel()
 
-    ground_readings = deque([], _LAUNCHPAD_READINGS)
-    recent_altis = deque([], _RECENT_READINGS)
-    gc.collect()
-    print(gc.mem_free())
     enable_sensor_recording()
 
 
@@ -283,9 +348,11 @@ def touched_down(recent_altis: deque, apogee: float, ground_level: float) -> boo
 
 
 def ascent() -> None:
-    global launch_time_ms, mode
+    global launch_time_ms, launch_time_ymdwhms, mode
     # Nothing really to do here -- sensors are already on, and the switch to NVS is handled by the process_reading function
     launch_time_ms = time.ticks_ms()
+    if _GPS_CONNECTED:
+        launch_time_ymdwhms = clock.datetime()
     mode = _MODE_ASCENT
     _update_neopixel()
 
@@ -328,6 +395,8 @@ def _write_initial_data() -> None:
         unpacked[0] = unpacked[0] - time_offset_ms
         adjusted_ground_readings.append(pack(">ifffff", *unpacked))
     header_str = "timestamp, altitude, acceleration, acc_x, acc_y, acc_z\n"
+    if _GPS_CONNECTED:
+        header_str = str(launch_time_ymdwhms) + header_str
     _write_data(list(adjusted_ground_readings), header_str)
 
 

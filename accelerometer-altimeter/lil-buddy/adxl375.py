@@ -35,6 +35,7 @@ class ADXL375:
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(6)
+        self.addr = _ADXL375_ADDR
 
     def initialize(self) -> None:
         if _ADXL375_ADDR not in self.i2c.scan():
