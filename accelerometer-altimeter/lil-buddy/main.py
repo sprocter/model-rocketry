@@ -179,7 +179,36 @@ def update_mode(recent_altis: deque) -> None:
 
 
 def send_message(arg=None) -> None:
-    radio.send("testing...", secrets["bigbuddy-addr"])
+    global msg_id, msg_header
+
+    hdr_id = msg_id % 255
+    if _GPS_CONNECTED:
+        hdr_flags = msg_id % 2
+    else:
+        hdr_flags = 0
+    msg_header[2] = hdr_id
+    msg_header[3] = hdr_flags
+
+    if hdr_flags == 0:
+        payload = pack(">d", apogee)
+    elif hdr_flags == 1:
+        gps.update()
+        lat_str = gps.lat
+        lat_bit = gps.latNS == "N"
+        lon_str = gps.lon
+        lon_bit = gps.lonEW == "E"
+        lat_elems = [int(x) for x in lat_str.split(".")]
+        lon_elems = [int(x) for x in lon_str.split(".")]
+        payload_elems = lat_elems + [lat_bit] + lon_elems + [lon_bit]
+        payload = pack(">HHHHBB", *payload_elems)
+    print(f"Apogee: {apogee}")
+    payload_list = []
+    for b in payload:
+        payload_list.append(b)
+    print(payload_list)
+    print(f"Status: {radio.send(msg_header + payload)}")
+
+    msg_id += 1
 
 
 def _update_neopixel() -> None:
@@ -209,7 +238,7 @@ def _initialize_nvs() -> None:
 
 
 def _init_devices() -> None:
-    global accel, alti, gps, radio, clock, _GPS_CONNECTED
+    global accel, alti, gps, radio, clock, msg_id, msg_header, _GPS_CONNECTED
     i2c = I2C(scl=40, sda=41)
     connected_devices = i2c.scan()
 
@@ -243,14 +272,16 @@ def _init_devices() -> None:
     alti.initialize()
 
     frequency = 917.0
-    bandwidth = 62.5
+    bandwidth = 125
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
     tx_power = -5
     mA_limit = 125.0
-    use_CRC = True
-    radio_status = radio.begin(
+    implicit_header = False
+    use_CRC = False
+    use_LDRO = True  # Low Data-Rate Optimizer
+    radio.begin(
         freq=frequency,
         bw=bandwidth,
         sf=spreading_factor,
@@ -258,25 +289,16 @@ def _init_devices() -> None:
         syncWord=sync_word,
         power=tx_power,
         currentLimit=mA_limit,
+        implicit=implicit_header,
         crcOn=use_CRC,
     )
+    radio.forceLDRO(use_LDRO)
+    msg_id = 0
     hdr_to = secrets["bigbuddy-addr"]
     hdr_from = secrets["lilbuddy-addr"]
-    hdr_id = 0x00
-    hdr_flags = 0x42
-    hdr = bytearray(4)
-    hdr[0] = hdr_to
-    hdr[1] = hdr_from
-    hdr[2] = hdr_id
-    hdr[3] = hdr_flags
-    radio.explicitHeader()
-    print(f"Radio Status (0 = No Error?) {radio_status}")
-    while True:
-        # radio.send(binascii.hexlify("hi"))
-        radio.send(hdr + b"bye.")
-        print("Message sent.")
-        time.sleep(10)
-    raise OSError
+    msg_header = bytearray(4)
+    msg_header[0] = hdr_to
+    msg_header[1] = hdr_from
 
 
 def initialize():
@@ -303,14 +325,17 @@ def initialize():
 
     _init_devices()
 
-    _initialize_nvs()
-
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
 
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_reading(alti.buffer)
     apogee = initial_altitude
+
+    send_message()
+    raise OSError
+
+    _initialize_nvs()
 
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)

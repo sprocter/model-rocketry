@@ -14,6 +14,7 @@ You should have received a copy of the GNU General Public License along with thi
 from machine import I2C, Pin, Signal
 from sh1107 import SH1107_I2C
 from max17048 import MAX17048
+from struct import unpack
 from ulora import LoRa, ModemConfig, SPIConfig
 import time, json
 
@@ -24,11 +25,17 @@ MODE_C = const(3)
 
 
 def listen_for_msgs(payload):
-    print("From:", payload.header_from)
-    print("Received:", payload.message)
-    formatted_msg = "".join([chr(s) for s in payload.message])
-    print("Formatted:", formatted_msg)
-    print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
+    print(payload)
+    # print("From:", payload.header_from)
+    # print("Received:", payload.message)
+    # formatted_msg = "".join([chr(s) for s in payload.message])
+    payload_list = []
+    for b in payload.message:
+        payload_list.append(b)
+    print(payload_list)
+    formatted_msg = str(unpack(">d", payload.message)[0])
+    # print("Formatted:", formatted_msg)
+    # print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
     show(formatted_msg, str(payload.rssi) + "dB")
 
 
@@ -108,7 +115,7 @@ lora = LoRa(
     this_address=secrets["bigbuddy-addr"],
     cs_pin=11,
     reset_pin=8,
-    freq=915.0,
+    freq=917.0,
     tx_power=5,
     modem_config=ModemConfig.USLegalLongRange,
     receive_all=False,
@@ -119,6 +126,7 @@ lora = LoRa(
 button_A.irq(trigger=Pin.IRQ_FALLING, handler=handleA)
 button_B.irq(trigger=Pin.IRQ_FALLING, handler=handleB)
 button_C.irq(trigger=Pin.IRQ_FALLING, handler=handleC)
+
 
 while True:
     if mode == MODE_INITIAL:
