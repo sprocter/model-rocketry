@@ -16,6 +16,7 @@ from sh1107 import SH1107_I2C
 from max17048 import MAX17048
 from struct import unpack
 from ulora import LoRa, ModemConfig, SPIConfig
+from micropython import schedule
 import time, json
 
 MODE_INITIAL = const(0)
@@ -25,25 +26,59 @@ MODE_C = const(3)
 
 
 def listen_for_msgs(payload):
-    print(payload)
-    # print("From:", payload.header_from)
-    # print("Received:", payload.message)
-    # formatted_msg = "".join([chr(s) for s in payload.message])
-    payload_list = []
-    for b in payload.message:
-        payload_list.append(b)
-    print(payload_list)
-    formatted_msg = str(unpack(">d", payload.message)[0])
-    # print("Formatted:", formatted_msg)
-    # print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
-    show(formatted_msg, str(payload.rssi) + "dB")
+    schedule(display_msg, payload)
+
+
+def display_msg(payload):
+    global lat_str, lon_str, alt_str
+
+    if payload is not None:
+        rssi_str = str(payload.rssi)
+        if payload.header_flags == 0:
+            alt_dbl = unpack(">d", payload.message)[0]
+            alt_str = f"{alt_dbl:.2f}"
+        if payload.header_flags == 1:
+            coords = unpack(">HHBHHB", payload.message)
+            lat_str = chr(coords[2]) + " " + f"{coords[0]:04}" + "." + f"{coords[1]:04}"
+            lat_str = (
+                lat_str[: lat_str.index(".") - 2]
+                + " "
+                + lat_str[lat_str.index(".") - 2 :]
+            )
+            lon_str = chr(coords[5]) + f"{coords[3]:05}" + "." + f"{coords[4]:04}"
+            lon_str = (
+                lon_str[: lon_str.index(".") - 2]
+                + " "
+                + lon_str[lon_str.index(".") - 2 :]
+            )
+    else:
+        rssi_str = "---.--"
+
+    line1 = f"Lat:{lat_str}"
+    line2 = f"Lon:{lon_str}"
+    line3 = f"Alt:{alt_str:>10}ft"
+    line4 = f"RSSI:{rssi_str:>9}dB"
+    display_small_text(line1, line2, line3, line4)
 
 
 def ignore_msgs(payload):
     pass
 
 
-def show(line1: str, line2: str) -> None:
+def display_small_text(line1: str, line2: str, line3: str, line4: str) -> None:
+    display.fill(0)
+    display.text(line1, 0, 0)
+    display.text(line2, 0, 16)
+    display.text(line3, 0, 32)
+    display.text(line4, 0, 48)
+    display.invert()
+    display.show()
+    time.sleep(1)
+    display.invert()
+    display.show()
+
+
+def display_big_text(line1: str, line2: str) -> None:
     display.fill(0)
     display.large_text(line1, 0, 0, 2)
     display.large_text(line2, 0, 32, 2)
@@ -66,7 +101,7 @@ def handleA(button_A):
     mode = MODE_BATTERY
     charge = charger.charge_percent
     rate = charger.charge_rate
-    show(f"{charge:.1f}%", f"{rate:.1f}%/hr")
+    display_big_text(f"{charge:.1f}%", f"{rate:.1f}%/hr")
 
 
 def handleB(button_B):
@@ -79,6 +114,7 @@ def handleB(button_B):
     lora.on_recv = listen_for_msgs
     lora.set_mode_rx()
     mode = MODE_LORA
+    display_msg(None)
 
 
 def handleC(button_C):
@@ -90,7 +126,7 @@ def handleC(button_C):
     lora.on_recv = ignore_msgs
     lora.set_mode_idle()
     mode = MODE_C
-    show("Button", "C")
+    display_big_text("Button", "C")
 
 
 with open("/secrets.json", "r") as f:
@@ -127,18 +163,21 @@ button_A.irq(trigger=Pin.IRQ_FALLING, handler=handleA)
 button_B.irq(trigger=Pin.IRQ_FALLING, handler=handleB)
 button_C.irq(trigger=Pin.IRQ_FALLING, handler=handleC)
 
+lat_str = "X -- --.----"
+lon_str = "Y--- --.----"
+alt_str = "----.--"
 
 while True:
     if mode == MODE_INITIAL:
-        show("Await", "Input")
+        display_big_text("Await", "Input")
         time.sleep(9)
     elif mode == MODE_BATTERY:
         charge = charger.charge_percent
         rate = charger.charge_rate
-        show(f"{charge:.1f}%", f"{rate:.1f}%/hr")
+        display_big_text(f"{charge:.1f}%", f"{rate:.1f}%/hr")
         time.sleep(9)
     elif mode == MODE_LORA:
         time.sleep(9)
     elif mode == MODE_C:
-        show("Button", "C")
+        display_big_text("Button", "C")
         time.sleep(9)

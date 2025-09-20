@@ -194,19 +194,15 @@ def send_message(arg=None) -> None:
     elif hdr_flags == 1:
         gps.update()
         lat_str = gps.lat
-        lat_bit = gps.latNS == "N"
+        lat_dir = ord(gps.latNS)
         lon_str = gps.lon
-        lon_bit = gps.lonEW == "E"
+        lon_dir = ord(gps.lonEW)
         lat_elems = [int(x) for x in lat_str.split(".")]
         lon_elems = [int(x) for x in lon_str.split(".")]
-        payload_elems = lat_elems + [lat_bit] + lon_elems + [lon_bit]
-        payload = pack(">HHHHBB", *payload_elems)
-    print(f"Apogee: {apogee}")
-    payload_list = []
-    for b in payload:
-        payload_list.append(b)
-    print(payload_list)
-    print(f"Status: {radio.send(msg_header + payload)}")
+        payload_elems = lat_elems + [lat_dir] + lon_elems + [lon_dir]
+        payload = pack(">HHBHHB", *payload_elems)
+
+    radio.send(msg_header + payload)
 
     msg_id += 1
 
