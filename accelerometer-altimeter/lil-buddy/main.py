@@ -11,6 +11,35 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
+import machine
+
+
+def share_files() -> None:
+    """Turns on wifi and an FTP server
+
+    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
+    """
+    import network, time, ftp, json, gc
+
+    with open("/secrets.json", "r") as f:
+        secrets = json.loads(f.read())
+    ap_if = network.WLAN(network.AP_IF)
+    time.sleep_ms(10)  # Give things a chance to settle
+    ap_if.active(True)
+    ap_if.config(ssid=secrets["ssid"], security=3, key=secrets["key"])
+    while ap_if.active() == False:
+        time.sleep_ms(10)  # Give things a chance to settle
+    gc.collect()
+    ftp.ftpserver()
+
+
+rtc = machine.RTC()
+
+if rtc.memory() == bytes([0xDE, 0xAD, 0xBE, 0xEF]):
+    rtc.memory(bytes())
+    share_files()
+    machine.deepsleep()
+
 from machine import PWM, Pin, I2C, Timer, RTC
 from struct import pack, unpack
 from neopixel import NeoPixel
@@ -23,7 +52,7 @@ from adxl375 import ADXL375
 from pa1010 import PA1010
 from sx1262 import SX1262
 
-import time, gc, machine, network, esp32, ftp, json, binascii
+import time, gc, esp32, json, vfs
 
 _MODE_INITIALIZE = const(0)
 _MODE_LAUNCHPAD = const(1)
@@ -93,10 +122,6 @@ def get_sensor_readings(timer: Timer) -> None:
     alti.read_raw()
     accel.read_raw()
 
-    # unstored_readings.write(time.ticks_diff(time.ticks_ms(), launch_time_ms).to_bytes(3, "little"))
-    # unstored_readings.write(alti.buffer)
-    # unstored_readings.write(accel.buffer)
-
     schedule(
         process_reading,
         (
@@ -112,13 +137,15 @@ def send_radio_message(timer: Timer) -> None:
 
 
 def button_handler(boot_button: Pin) -> None:
-    global debounce_time
-    # debounce
-    if time.ticks_diff(time.ticks_ms(), debounce_time) < 400:
-        return
-    debounce_time = time.ticks_ms()
-    if mode == _MODE_FINISHED:
-        schedule(share_files, None)
+    global mode
+    buzzer_timer.deinit()
+    sensor_reading_timer.deinit()
+    radio_timer.deinit()
+    rtc = RTC()
+    rtc.memory(bytes([0xDE, 0xAD, 0xBE, 0xEF]))
+    mode = _MODE_WIFI
+    _update_neopixel()
+    machine.reset()
 
 
 ##################################
@@ -127,24 +154,19 @@ def button_handler(boot_button: Pin) -> None:
 
 
 def enable_buzzer() -> None:
-    global p1, p2, buzzer_timer
-    buzzer_timer = Timer(3)
+    global p1, p2
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
-    p1 = PWM(Pin(18), freq=4800, duty_u16=32768)
-    p2 = PWM(Pin(9), freq=4800, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(6), freq=4800, duty_u16=32768)
+    p2 = PWM(Pin(5), freq=4800, duty_u16=32768, invert=True)
 
 
 def enable_sensor_recording() -> None:
-    global sensor_reading_timer
-    sensor_reading_timer = Timer(0)
     sensor_reading_timer.init(
         mode=Timer.PERIODIC, freq=25, callback=get_sensor_readings
     )
 
 
 def enable_radio() -> None:
-    global radio_timer
-    radio_timer = Timer(2)
     radio_timer.init(mode=Timer.PERIODIC, period=10000, callback=send_radio_message)
 
 
@@ -244,27 +266,26 @@ def _init_devices() -> None:
 
     if accel.addr in connected_devices:
         accel.initialize()
-    # if PA1010.I2C_ADDR in connected_devices:
-    #     _GPS_CONNECTED = True
-    #     clock = RTC()
-    #     gps = PA1010(i2c)
-    #     gps.set_update_rate(1)
-    #     while not gps.update():
-    #         print("GPS: No fix!")
-    #         time.sleep(5)
-    #     gps.update()  # We have a fix but it could be up to 5s outdated
-    #     clock.init(
-    #         (
-    #             gps.year,
-    #             gps.month,
-    #             gps.day,
-    #             gps.hour,
-    #             gps.minute,
-    #             gps.second,
-    #             0,  # microsecond, ignored
-    #             0,  # tzinfo, ignored
-    #         )
-    #     )
+    if PA1010.I2C_ADDR in connected_devices:
+        _GPS_CONNECTED = True
+        clock = RTC()
+        gps = PA1010(i2c)
+        gps.set_update_rate(1)
+    while not gps.update():
+        time.sleep(5)
+    gps.update()  # We have a fix but it could be up to 5s outdated
+    clock.init(
+        (
+            gps.year,
+            gps.month,
+            gps.day,
+            gps.hour,
+            gps.minute,
+            gps.second,
+            0,  # microsecond, ignored
+            0,  # tzinfo, ignored
+        )
+    )
     alti.initialize()
 
     frequency = 917.0
@@ -298,7 +319,7 @@ def _init_devices() -> None:
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time
+    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer
 
     mode = _MODE_INITIALIZE
 
@@ -309,6 +330,13 @@ def initialize():
     neopixel = NeoPixel(neopixel_pin, 1)
 
     _update_neopixel()
+
+    machine.freq(80000000)
+
+    sensor_reading_timer = Timer(0)
+    radio_timer = Timer(2)
+    buzzer_timer = Timer(3)
+    boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
 
     launch_time_ms = time.ticks_ms()
     debounce_time = launch_time_ms
@@ -321,15 +349,10 @@ def initialize():
 
     _init_devices()
 
-    boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
-
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_reading(alti.buffer)
     apogee = initial_altitude
-
-    send_message()
-    raise OSError
 
     _initialize_nvs()
 
@@ -337,8 +360,6 @@ def initialize():
     recent_altis = deque([], _RECENT_READINGS)
 
     gc.collect()
-    print(f"Free: {gc.mem_free()}")
-    print(f"Allocated: {gc.mem_alloc()}")
 
     mode = _MODE_LAUNCHPAD
     _update_neopixel()
@@ -384,27 +405,6 @@ def descent() -> None:
     _update_neopixel()
     enable_buzzer()
     enable_radio()
-
-
-def share_files(arg=None) -> None:
-    """Turns on wifi and an FTP server
-
-    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
-    """
-    global mode
-    mode = _MODE_WIFI
-    _update_neopixel()
-
-    radio_timer.deinit()
-    buzzer_timer.deinit()
-    p1.deinit()
-    p2.deinit()
-
-    ap_if = network.WLAN(network.AP_IF)
-    ap_if.active(True)
-    time.sleep_ms(10)  # Give things a chance to settle
-    ap_if.config(ssid=secrets["wifi-ssid"], security=3, key=secrets["wifi-key"])
-    ftp.ftpserver()
 
 
 def _write_initial_data() -> None:
@@ -498,5 +498,9 @@ def touchdown() -> None:
 initialize()
 time.sleep(5)
 ascent()
-time.sleep(10)
+time.sleep(5)
+descent()
+time.sleep(5)
 touchdown()
+while True:
+    time.sleep(5)
