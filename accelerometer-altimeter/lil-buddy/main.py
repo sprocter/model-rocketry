@@ -110,12 +110,12 @@ boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
 
 def toggle_buzzer_freq(timer: Timer) -> None:
     global p1, p2
-    if p1.freq() == 4798:
-        p1.freq(4000)
-        p2.freq(4000)
+    if p1.freq() == 5000:
+        p1.freq(2000)
+        p2.freq(2000)
     else:
-        p1.freq(4800)
-        p2.freq(4800)
+        p1.freq(5000)
+        p2.freq(5000)
 
 
 def get_sensor_readings(timer: Timer) -> None:
@@ -156,8 +156,8 @@ def button_handler(boot_button: Pin) -> None:
 def enable_buzzer() -> None:
     global p1, p2
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
-    p1 = PWM(Pin(6), freq=4800, duty_u16=32768)
-    p2 = PWM(Pin(5), freq=4800, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(6), freq=5000, duty_u16=32768)
+    p2 = PWM(Pin(5), freq=5000, duty_u16=32768, invert=True)
 
 
 def enable_sensor_recording() -> None:
@@ -212,7 +212,7 @@ def send_message(arg=None) -> None:
     msg_header[3] = hdr_flags
 
     if hdr_flags == 0:
-        payload = pack(">d", apogee)
+        payload = pack(">d", apogee - initial_altitude)
     elif hdr_flags == 1:
         gps.update()
         lat_str = gps.lat
@@ -266,26 +266,26 @@ def _init_devices() -> None:
 
     if accel.addr in connected_devices:
         accel.initialize()
-    if PA1010.I2C_ADDR in connected_devices:
-        _GPS_CONNECTED = True
-        clock = RTC()
-        gps = PA1010(i2c)
-        gps.set_update_rate(1)
-    while not gps.update():
-        time.sleep(5)
-    gps.update()  # We have a fix but it could be up to 5s outdated
-    clock.init(
-        (
-            gps.year,
-            gps.month,
-            gps.day,
-            gps.hour,
-            gps.minute,
-            gps.second,
-            0,  # microsecond, ignored
-            0,  # tzinfo, ignored
-        )
-    )
+    # if PA1010.I2C_ADDR in connected_devices:
+    #     _GPS_CONNECTED = True
+    #     clock = RTC()
+    #     gps = PA1010(i2c)
+    #     gps.set_update_rate(1)
+    #     while not gps.update():
+    #         time.sleep(5)
+    #     gps.update()  # We have a fix but it could be up to 5s outdated
+    #     clock.init(
+    #         (
+    #             gps.year,
+    #             gps.month,
+    #             gps.day,
+    #             gps.hour,
+    #             gps.minute,
+    #             gps.second,
+    #             0,  # microsecond, ignored
+    #             0,  # tzinfo, ignored
+    #         )
+    #     )
     alti.initialize()
 
     frequency = 917.0
