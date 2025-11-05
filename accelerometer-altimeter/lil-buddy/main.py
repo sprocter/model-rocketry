@@ -153,7 +153,7 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     update_mode()
     if mode == _MODE_LAUNCHPAD:
         ground_readings.append(packed_reading)
-    elif mode == _MODE_ASCENT or mode == _MODE_DESCENT:
+    elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         nvs.set_blob(str(reading_num), packed_reading)
         reading_num += 1
 
@@ -168,7 +168,10 @@ def update_mode() -> None:
         # We can go straight to descent from launchpad mode because mid-air reboots happen, unfortunately. We don't want to lose data.
         descent()
     elif mode == _MODE_DESCENT and touched_down(recent_altis, apogee):
-        touchdown()
+        mode = _MODE_TOUCHDOWN
+        _update_neopixel()
+        # Wait a final few seconds then remove timer and turn off sensors
+        touchdown_timer.init(mode=Timer.ONE_SHOT, period=3000, callback=touchdown)
 
 
 def send_message(arg=None) -> None:
@@ -290,7 +293,7 @@ def _init_devices() -> None:
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed
+    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer
 
     mode = _MODE_INITIALIZE
 
@@ -305,14 +308,15 @@ def initialize():
     machine.freq(240000000)
 
     sensor_reading_timer = Timer(0)
+    touchdown_timer = Timer(1)
+    # TODO: Set a ~2 minute (5 minute? max of nvs?) timer that forces the thing into landed mode, turning on the buzzer and radio and turning off the sensors
     radio_timer = Timer(2)
     buzzer_timer = Timer(3)
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
     button_pressed = False
 
-    launch_time_ms = time.ticks_ms()
-    debounce_time = launch_time_ms
-    init_time = launch_time_ms
+    init_time = time.ticks_ms()
+    launch_time_ms = init_time  # launch time will be reset when liftoff is detected
 
     vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
 
@@ -376,8 +380,6 @@ def descent() -> None:
     mode = _MODE_DESCENT
     _update_neopixel()
     enable_buzzer()
-    send_radio_message(None)
-    enable_radio()
 
 
 def _write_initial_data() -> None:
@@ -390,7 +392,7 @@ def _write_initial_data() -> None:
         adjusted_ground_readings.append(pack(">ifffff", *unpacked))
     header_str = "timestamp, altitude, acceleration, acc_x, acc_y, acc_z\n"
     if _GPS_CONNECTED:
-        header_str = str(launch_time_ymdwhms) + header_str
+        header_str = str(launch_time_ymdwhms) + "\n" + header_str
     _write_data(list(adjusted_ground_readings), header_str)
 
 
@@ -404,8 +406,17 @@ def _write_nvs_data() -> None:
     while True:
         packed_readings = []
         for i in range(first_entry, last_entry):
-            packed_readings.append(bytearray(24))
-            nvs.get_blob(str(i), packed_readings[-1])
+            if i == first_entry:
+                # We have to adjust the timestamp of the first entry
+                time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
+                entry = bytearray(24)
+                nvs.get_blob(str(i), entry)
+                unpacked = list(unpack(">ifffff", entry))
+                unpacked[0] = unpacked[0] - time_offset_ms
+                packed_readings.append(pack(">ifffff", *unpacked))
+            else:
+                packed_readings.append(bytearray(24))
+                nvs.get_blob(str(i), packed_readings[-1])
 
         _write_data(packed_readings)
 
@@ -444,24 +455,17 @@ def _wipe_nvs_namespace() -> None:
         nvs.erase_key(str(i))
 
 
-def touchdown() -> None:
+def touchdown(timer: Timer) -> None:
     global mode
-
-    # Wait a final few seconds then remove timer and turn off sensors
-    time.sleep(_INITIAL_FINAL_TIME_SEC)
-    mode = _MODE_TOUCHDOWN
-    _update_neopixel()
-
     sensor_reading_timer.deinit()
+    enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
     # TODO: Add shutoff to sensors?
 
     gc.collect()
 
     _write_initial_data()
     _write_nvs_data()
-    startwipe = time.ticks_ms()
     _wipe_nvs_namespace()
-    print(f"Erase took {time.ticks_diff(time.ticks_ms(), startwipe)}ms.")
 
     mode = _MODE_FINISHED
     _update_neopixel()
