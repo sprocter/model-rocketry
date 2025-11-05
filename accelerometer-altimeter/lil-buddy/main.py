@@ -11,40 +11,11 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-import machine
-
-
-def share_files() -> None:
-    """Turns on wifi and an FTP server
-
-    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a single-user FTP server (no username or password). After the user disconnects from that FTP server, this will return.
-    """
-    import network, time, ftp, json, gc
-
-    with open("/secrets.json", "r") as f:
-        secrets = json.loads(f.read())
-    ap_if = network.WLAN(network.AP_IF)
-    time.sleep_ms(10)  # Give things a chance to settle
-    ap_if.active(True)
-    ap_if.config(ssid=secrets["ssid"], security=3, key=secrets["key"])
-    while ap_if.active() == False:
-        time.sleep_ms(10)  # Give things a chance to settle
-    gc.collect()
-    ftp.ftpserver()
-
-
-rtc = machine.RTC()
-
-if rtc.memory() == bytes([0xDE, 0xAD, 0xBE, 0xEF]):
-    rtc.memory(bytes())
-    share_files()
-    machine.deepsleep()
-
-from machine import PWM, Pin, I2C, Timer, RTC
+from machine import PWM, Pin, I2C, Timer
 from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque
-from micropython import schedule
+from micropython import schedule, const
 from math import sqrt
 
 from bmp581 import BMP581
@@ -52,7 +23,7 @@ from adxl375 import ADXL375
 from pa1010 import PA1010
 from sx1262 import SX1262
 
-import time, gc, esp32, json, vfs
+import time, gc, esp32, json, vfs, machine, network, uftpd
 
 _MODE_INITIALIZE = const(0)
 _MODE_LAUNCHPAD = const(1)
@@ -137,15 +108,14 @@ def send_radio_message(timer: Timer) -> None:
 
 
 def button_handler(boot_button: Pin) -> None:
-    global mode
+    global mode, button_pressed
+    if button_pressed:
+        return
+    button_pressed = True
     buzzer_timer.deinit()
     sensor_reading_timer.deinit()
     radio_timer.deinit()
-    rtc = RTC()
-    rtc.memory(bytes([0xDE, 0xAD, 0xBE, 0xEF]))
-    mode = _MODE_WIFI
-    _update_neopixel()
-    machine.reset()
+    share_files()
 
 
 ##################################
@@ -167,7 +137,7 @@ def enable_sensor_recording() -> None:
 
 
 def enable_radio() -> None:
-    radio_timer.init(mode=Timer.PERIODIC, period=10000, callback=send_radio_message)
+    radio_timer.init(mode=Timer.PERIODIC, period=60000, callback=send_radio_message)
 
 
 def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
@@ -180,6 +150,7 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     if mode == _MODE_ASCENT and altitude > apogee:
         apogee = altitude
     recent_altis.append(altitude)
+    update_mode()
     if mode == _MODE_LAUNCHPAD:
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT:
@@ -187,16 +158,16 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
         reading_num += 1
 
 
-def update_mode(recent_altis: deque) -> None:
+def update_mode() -> None:
     global mode
-    if mode == _MODE_LAUNCHPAD and have_liftoff(recent_altis, initial_altitude):
+    if mode == _MODE_LAUNCHPAD and have_liftoff(recent_altis):
         ascent()
     elif (mode == _MODE_ASCENT or mode == _MODE_LAUNCHPAD) and started_descent(
         recent_altis, apogee
     ):
         # We can go straight to descent from launchpad mode because mid-air reboots happen, unfortunately. We don't want to lose data.
         descent()
-    elif mode == _MODE_DESCENT and touched_down(recent_altis, apogee, initial_altitude):
+    elif mode == _MODE_DESCENT and touched_down(recent_altis, apogee):
         touchdown()
 
 
@@ -319,7 +290,7 @@ def _init_devices() -> None:
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer
+    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed
 
     mode = _MODE_INITIALIZE
 
@@ -331,12 +302,13 @@ def initialize():
 
     _update_neopixel()
 
-    machine.freq(80000000)
+    machine.freq(240000000)
 
     sensor_reading_timer = Timer(0)
     radio_timer = Timer(2)
     buzzer_timer = Timer(3)
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
+    button_pressed = False
 
     launch_time_ms = time.ticks_ms()
     debounce_time = launch_time_ms
@@ -352,7 +324,7 @@ def initialize():
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_reading(alti.buffer)
-    apogee = initial_altitude
+    apogee = 0.0
 
     _initialize_nvs()
 
@@ -367,8 +339,8 @@ def initialize():
     enable_sensor_recording()
 
 
-def have_liftoff(recent_altis: deque, ground_level: float) -> bool:
-    threshold = ground_level + _ALTITUDE_DIFFERENCE
+def have_liftoff(recent_altis: deque) -> bool:
+    threshold = _ALTITUDE_DIFFERENCE
     return sum(i > threshold for i in recent_altis) > _CONFIRMATORY_READINGS
 
 
@@ -377,8 +349,8 @@ def started_descent(recent_altis: deque, apogee: float) -> bool:
     return sum(i < threshold for i in recent_altis) > _CONFIRMATORY_READINGS
 
 
-def touched_down(recent_altis: deque, apogee: float, ground_level: float) -> bool:
-    if apogee < (ground_level + _ALTITUDE_DIFFERENCE):
+def touched_down(recent_altis: deque, apogee: float) -> bool:
+    if apogee < _ALTITUDE_DIFFERENCE:
         return False  # If we haven't gone up at least _A_D
     if max(recent_altis) > (apogee - _ALTITUDE_DIFFERENCE):
         return False  # If we haven't fallen at least _A_D from apogee
@@ -404,6 +376,7 @@ def descent() -> None:
     mode = _MODE_DESCENT
     _update_neopixel()
     enable_buzzer()
+    send_radio_message(None)
     enable_radio()
 
 
@@ -468,7 +441,6 @@ def _wipe_nvs_namespace() -> None:
             # Things seem to bog down with longer erases, I'm not sure why
             nvs.commit()
             gc.collect()
-            time.sleep(1)
         nvs.erase_key(str(i))
 
 
@@ -481,7 +453,7 @@ def touchdown() -> None:
     _update_neopixel()
 
     sensor_reading_timer.deinit()
-    # # TODO: Add shutoff to sensors?
+    # TODO: Add shutoff to sensors?
 
     gc.collect()
 
@@ -495,12 +467,34 @@ def touchdown() -> None:
     _update_neopixel()
 
 
+def share_files() -> None:
+    """Turns on wifi and an FTP server
+
+    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a FTP server (no username or password).
+    """
+
+    global mode
+    mode = _MODE_WIFI
+    _update_neopixel()
+    with open("/secrets.json", "r") as f:
+        secrets = json.loads(f.read())
+    gc.collect()
+    ap_if = network.WLAN(network.AP_IF)
+    time.sleep_ms(10)  # Give things a chance to settle
+    ap_if.active(True)
+    ap_if.config(ssid=secrets["ssid"], security=3, key=secrets["key"])
+    while ap_if.active() == False:
+        time.sleep_ms(10)  # Give things a chance to settle
+    gc.collect()
+    uftpd.start(splash=False)
+
+
 initialize()
 time.sleep(5)
-ascent()
-time.sleep(5)
-descent()
-time.sleep(5)
-touchdown()
+# ascent()
+# time.sleep(60)
+# descent()
+# time.sleep(60)
+# touchdown()
 while True:
     time.sleep(5)

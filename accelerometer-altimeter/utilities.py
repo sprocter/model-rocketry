@@ -1,7 +1,6 @@
 import json, vfs, os, esp32, machine, time
 from random import randint
 from machine import I2C
-from adxl375 import ADXL375
 
 
 def generate_secrets():
@@ -46,6 +45,8 @@ def print_filesystem_space():
 
 
 def print_accel_offsets():
+    from adxl375 import ADXL375
+
     i2c = I2C(sda=41, scl=40)
     accelerometer = ADXL375(i2c)
     accelerometer.initialize()
@@ -68,4 +69,4 @@ def print_accel_offsets():
     print("_Z_ERR = ", sum(zs) / len(zs) - 1)
 
 
-print_accel_offsets()
+reset_filesystem()
