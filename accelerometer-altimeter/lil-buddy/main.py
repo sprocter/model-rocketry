@@ -20,10 +20,12 @@ from math import sqrt
 
 from bmp581 import BMP581
 from adxl375 import ADXL375
+from icm20649 import ICM20649
 from pa1010 import PA1010
 from sx1262 import SX1262
 
 import time, gc, esp32, json, vfs, machine, network, uftpd
+import adxl375, icm20649
 
 _MODE_INITIALIZE = const(0)
 _MODE_LAUNCHPAD = const(1)
@@ -108,12 +110,11 @@ def send_radio_message(timer: Timer) -> None:
 
 
 def button_handler(boot_button: Pin) -> None:
-    global mode, button_pressed
+    global button_pressed
     if button_pressed:
         return
     button_pressed = True
     buzzer_timer.deinit()
-    sensor_reading_timer.deinit()
     radio_timer.deinit()
     share_files()
 
@@ -144,9 +145,8 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     global nvs, reading_num, recent_altis, apogee
     timestamp = int.from_bytes(reading[0], "little")
     altitude = alti.decode_reading(reading[1]) - initial_altitude
-    (acc_x, acc_y, acc_z) = accel.decode_reading(reading[2])
-    acc = sqrt(acc_x**2 + acc_y**2 + acc_z**2)
-    packed_reading = pack(">ifffff", timestamp, altitude, acc, acc_x, acc_y, acc_z)
+    (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(reading[2])
+    packed_reading = pack(">iffffffff", timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp)
     if mode == _MODE_ASCENT and altitude > apogee:
         apogee = altitude
     recent_altis.append(altitude)
@@ -228,46 +228,16 @@ def _initialize_nvs() -> None:
             break
         launch_num += 1
 
-
-def _init_devices() -> None:
-    global accel, alti, gps, radio, clock, msg_id, msg_header, _GPS_CONNECTED
-    i2c = I2C(scl=40, sda=41)
-    connected_devices = i2c.scan()
-
-    accel = ADXL375(i2c)
-    alti = BMP581(i2c)
+def _init_radio():
+    global msg_header, msg_id
     radio = SX1262(1, 36, 35, 37, 8, 18, 9, 17)
-
-    if accel.addr in connected_devices:
-        accel.initialize()
-    # if PA1010.I2C_ADDR in connected_devices:
-    #     _GPS_CONNECTED = True
-    #     clock = RTC()
-    #     gps = PA1010(i2c)
-    #     gps.set_update_rate(1)
-    #     while not gps.update():
-    #         time.sleep(5)
-    #     gps.update()  # We have a fix but it could be up to 5s outdated
-    #     clock.init(
-    #         (
-    #             gps.year,
-    #             gps.month,
-    #             gps.day,
-    #             gps.hour,
-    #             gps.minute,
-    #             gps.second,
-    #             0,  # microsecond, ignored
-    #             0,  # tzinfo, ignored
-    #         )
-    #     )
-    alti.initialize()
 
     frequency = 917.0
     bandwidth = 125
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = -5
+    tx_power = 22 #-5 # 22
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -290,6 +260,51 @@ def _init_devices() -> None:
     msg_header = bytearray(4)
     msg_header[0] = hdr_to
     msg_header[1] = hdr_from
+
+    return radio
+
+def _init_devices() -> None:
+    global accel, alti, gyro, gps, radio, clock, _GPS_CONNECTED
+    i2c = I2C(scl=40, sda=41)
+    connected_devices = i2c.scan()
+
+    if adxl375.ADXL375_ADDR in connected_devices:
+        accel = ADXL375(i2c) # Use the ADXL if we have multiple accelerometers
+    elif icm20649.ICM20649_ADDR in connected_devices:
+        accel = ICM20649(i2c)
+
+    if icm20649.ICM20649_ADDR in connected_devices:
+        if isinstance(accel, ICM20649):
+            gyro = accel # Share object rather than re-create it
+        else:
+            gyro = ICM20649(i2c)
+    
+    alti = BMP581(i2c)
+    radio = _init_radio() 
+
+    if accel.addr in connected_devices:
+        accel.initialize()
+    if PA1010.I2C_ADDR in connected_devices:
+        _GPS_CONNECTED = True
+        clock = RTC()
+        gps = PA1010(i2c)
+        gps.set_update_rate(1)
+        while not gps.update():
+            time.sleep(5)
+        gps.update()  # We have a fix but it could be up to 5s outdated
+        clock.init(
+            (
+                gps.year,
+                gps.month,
+                gps.day,
+                gps.hour,
+                gps.minute,
+                gps.second,
+                0,  # microsecond, ignored
+                0,  # tzinfo, ignored
+            )
+        )
+    alti.initialize()
 
 
 def initialize():
@@ -387,10 +402,10 @@ def _write_initial_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">ifffff", entry))
+        unpacked = list(unpack(">iffffffff", entry))
         unpacked[0] = unpacked[0] - time_offset_ms
-        adjusted_ground_readings.append(pack(">ifffff", *unpacked))
-    header_str = "timestamp, altitude, acceleration, acc_x, acc_y, acc_z\n"
+        adjusted_ground_readings.append(pack(">iffffffff", *unpacked))
+    header_str = "timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp\n"
     if _GPS_CONNECTED:
         header_str = str(launch_time_ymdwhms) + "\n" + header_str
     _write_data(list(adjusted_ground_readings), header_str)
@@ -409,13 +424,13 @@ def _write_nvs_data() -> None:
             if i == first_entry:
                 # We have to adjust the timestamp of the first entry
                 time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
-                entry = bytearray(24)
+                entry = bytearray(36)
                 nvs.get_blob(str(i), entry)
-                unpacked = list(unpack(">ifffff", entry))
+                unpacked = list(unpack(">iffffffff", entry))
                 unpacked[0] = unpacked[0] - time_offset_ms
-                packed_readings.append(pack(">ifffff", *unpacked))
+                packed_readings.append(pack(">iffffffff", *unpacked))
             else:
-                packed_readings.append(bytearray(24))
+                packed_readings.append(bytearray(36))
                 nvs.get_blob(str(i), packed_readings[-1])
 
         _write_data(packed_readings)
@@ -437,7 +452,7 @@ def _write_data(
         if header_str is not None:
             f.write(header_str)
         for packed_reading in packed_readings:
-            f.write(", ".join(str(x) for x in unpack(">ifffff", packed_reading)) + "\n")
+            f.write(", ".join(str(x) for x in unpack(">iffffffff", packed_reading)) + "\n")
 
 
 def _wipe_nvs_namespace() -> None:
@@ -496,9 +511,11 @@ def share_files() -> None:
 initialize()
 time.sleep(5)
 # ascent()
-# time.sleep(60)
+# time.sleep(5)
 # descent()
-# time.sleep(60)
-# touchdown()
+# time.sleep(5)
+# mode = _MODE_TOUCHDOWN
+# _update_neopixel()
+# touchdown(None)
 while True:
     time.sleep(5)

@@ -16,7 +16,7 @@ from struct import unpack
 from micropython import const
 import time
 
-_ADXL375_ADDR = const(0x53)
+ADXL375_ADDR = const(0x53)
 
 _ADXL375_DEVID = const(0x00)
 _ADXL375_BW_RATE = const(0x2C)
@@ -35,23 +35,23 @@ class ADXL375:
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(6)
-        self.addr = _ADXL375_ADDR
+        self.addr = ADXL375_ADDR
 
     def initialize(self) -> None:
-        if _ADXL375_ADDR not in self.i2c.scan():
-            raise OSError(f"ADXL375 not found at {_ADXL375_ADDR}")
+        if ADXL375_ADDR not in self.i2c.scan():
+            raise OSError(f"ADXL375 not found at {ADXL375_ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(_ADXL375_ADDR, _ADXL375_DEVID, 1)
+            "<B", self.i2c.readfrom_mem(ADXL375_ADDR, _ADXL375_DEVID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
 
-        self.i2c.writeto_mem(_ADXL375_ADDR, _ADXL375_POWER_CTL, b"\x08")
-        self.i2c.writeto_mem(_ADXL375_ADDR, _ADXL375_BW_RATE, b"\x08")
+        self.i2c.writeto_mem(ADXL375_ADDR, _ADXL375_POWER_CTL, b"\x08")
+        self.i2c.writeto_mem(ADXL375_ADDR, _ADXL375_BW_RATE, b"\x08")
         time.sleep_ms(10)
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(_ADXL375_ADDR, _ADXL375_DATAX0, self.buffer)
+        self.i2c.readfrom_mem_into(ADXL375_ADDR, _ADXL375_DATAX0, self.buffer)
 
     def decode_reading(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
