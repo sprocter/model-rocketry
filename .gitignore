@@ -164,7 +164,7 @@ cython_debug/
 accelerometer-altimeter/data/
 accelerometer-altimeter/sandboxes-and-tests/
 accelerometer-altimeter/.vscode/
-accelerometer-altimeter/.micropico
 accelerometer-altimeter/secrets.json
+accelerometer-altimeter/typings/
 
 **/.DS_Store
