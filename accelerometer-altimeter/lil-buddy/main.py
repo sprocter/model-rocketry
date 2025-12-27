@@ -23,6 +23,7 @@ from adxl375 import ADXL375
 from icm20649 import ICM20649
 from pa1010 import PA1010
 from sx1262 import SX1262
+from kalman import StateEstimator
 
 import time, gc, esp32, json, vfs, machine, network, uftpd
 import adxl375, icm20649
@@ -143,9 +144,12 @@ def enable_radio() -> None:
 
 def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     global nvs, reading_num, recent_altis, apogee
+    start_timestamp = time.ticks_us()
     timestamp = int.from_bytes(reading[0], "little")
     altitude = alti.decode_reading(reading[1]) - initial_altitude
+    estimator.altitude = altitude
     (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(reading[2])
+    estimator.acceleration = acc_y
     packed_reading = pack(">iffffffff", timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp)
     if mode == _MODE_ASCENT and altitude > apogee:
         apogee = altitude
@@ -156,6 +160,8 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         nvs.set_blob(str(reading_num), packed_reading)
         reading_num += 1
+    end_timestamp = time.ticks_us()
+    print(timestamp)
 
 
 def update_mode() -> None:
@@ -265,7 +271,7 @@ def _init_radio():
 
 def _init_devices() -> None:
     global accel, alti, gyro, gps, radio, clock, _GPS_CONNECTED
-    i2c = I2C(scl=40, sda=41)
+    i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
 
     if adxl375.ADXL375_ADDR in connected_devices:
@@ -280,7 +286,9 @@ def _init_devices() -> None:
             gyro = ICM20649(i2c)
     
     alti = BMP581(i2c)
-    radio = _init_radio() 
+    alti.initialize()
+
+    # radio = _init_radio() 
 
     if accel.addr in connected_devices:
         accel.initialize()
@@ -304,11 +312,10 @@ def _init_devices() -> None:
                 0,  # tzinfo, ignored
             )
         )
-    alti.initialize()
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer
+    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, estimator
 
     mode = _MODE_INITIALIZE
 
@@ -339,6 +346,9 @@ def initialize():
         secrets = json.loads(f.read())
 
     _init_devices()
+
+    estimator = StateEstimator(40, 1, 4)
+    estimator.acceleration = 9.80665
 
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()

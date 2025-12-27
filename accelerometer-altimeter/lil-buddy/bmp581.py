@@ -18,14 +18,16 @@ import time
 
 _BMP581_ADDR = const(0x47)
 
-_BMP581_CHIPID = const(0x01)  # Datasheet pg 51, 7.1
-_BMP581_PRESS_XLSB = const(0x20)  # Datasheet pg 56, 7.14
-_BMP581_DSP_IIR_CFG = const(0x31)  # Datasheet pg 62, 7.28
-_BMP581_OSR_CONFIG = const(0x36)  # Datasheet pg 64, 7.32
-_BMP581_ODR_CONFIG = const(0x37)  # Datasheet pg 64-65, 7.33
+# Page and section numbers refer to the datasheet
 
-_BAROMETRIC_PRESSURE = const(1013.25)
-_EXPECTED_DEVICE_ID = const(80)  # Datasheet pg 51, 7.1
+_BMP581_CHIPID = const(0x01)  # pg 51, 7.1
+_BMP581_PRESS_XLSB = const(0x20)  # pg 56, 7.14
+_BMP581_DSP_IIR_CFG = const(0x31)  # pg 62, 7.28
+_BMP581_OSR_CONFIG = const(0x36)  # pg 64, 7.32
+_BMP581_ODR_CONFIG = const(0x37)  # pg 64-65, 7.33
+
+_BAROMETRIC_PRESSURE = const(1013.25) # https://en.wikipedia.org/wiki/Standard_atmosphere_(unit)
+_EXPECTED_DEVICE_ID = const(80)  # pg 51, 7.1
 
 
 class BMP581:
@@ -64,7 +66,7 @@ class BMP581:
 
     def decode_reading(self, reading: bytearray) -> float:
         pressure_pa = (reading[2] << 16 | reading[1] << 8 | reading[0]) >> 6
-        alti_ft = (
+        alti_m = (
             1 - (((pressure_pa / 100) / _BAROMETRIC_PRESSURE) ** 0.190284)
-        ) * 145366.45
-        return alti_ft
+        ) * 44307.69396 # formula from https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf
+        return alti_m
