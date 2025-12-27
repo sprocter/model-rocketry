@@ -3,8 +3,6 @@
 $fa = .1;
 $fs = 0.04;
 
-BOARD_LENGTH = 150;
-BOARD_WIDTH = 98;
 BOARD_DEPTH = 2;
 
 punch_depth = .1;
@@ -39,40 +37,51 @@ module swirly() {
             dash();
 }
 
-module wings() {
+module wings(width, length) {
     difference() {
-        translate([BOARD_WIDTH / 2, BOARD_LENGTH, 0]){
+        translate([width / 2, length, 0]){
             rotate([90,0,0]){
                 difference() {
-                    cylinder(h = BOARD_LENGTH, d = BOARD_WIDTH);
+                    cylinder(h = length, d = width);
                     translate([0, 0, h]){
-                        cylinder(h = BOARD_LENGTH + punch_depth, d = BOARD_WIDTH-BOARD_DEPTH);
+                        cylinder(h = length + punch_depth, d = width-BOARD_DEPTH);
                     }
                 }
             }
         }
 
         translate([0, h, 10]){
-            cube([BOARD_WIDTH, BOARD_LENGTH+punch_depth, 999]);
+            cube([width, length+punch_depth, 999]);
         }
         
         translate([0, h, -10 - 999]){
-            cube([BOARD_WIDTH, BOARD_LENGTH+punch_depth, 999]);
+            cube([width, length+punch_depth, 999]);
         }
     }
 }
 
-wings();
-    
-difference() {
-    translate([-1 * h, 0, -1 * BOARD_DEPTH / 2]){
-        cube([BOARD_WIDTH - punch_depth, BOARD_LENGTH, BOARD_DEPTH]);
-    }
-    translate([3, 6, -1 * BOARD_DEPTH / 2]){
-        for(i = [p3in : p6in : BOARD_WIDTH - p3in])
-            for(j = [p3in : p6in : BOARD_LENGTH - p3in])
-                translate([i, j, 0]){
-                    swirly();
-                }
+module board(width, length) {
+    wings(width, length);        
+    difference() {
+        translate([-1 * h, 0, -1 * BOARD_DEPTH / 2]){
+            cube([width - punch_depth, length, BOARD_DEPTH]);
+        }
+        translate([3, 6, -1 * BOARD_DEPTH / 2]){
+            for(i = [p3in : p6in : width - p3in])
+                for(j = [p3in : p6in : length - p3in])
+                    translate([i, j, 0]){
+                        swirly();
+                    }
+        }
     }
 }
+
+
+coupler_width = 95;
+coupler_length = 194;
+payload_width = 97.5;
+payload_length = 127.5;
+
+board(payload_width, payload_length);
+translate([(payload_width - coupler_width)/2, payload_length, 0])
+    board(coupler_width, coupler_length);
