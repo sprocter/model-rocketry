@@ -25,7 +25,7 @@ from pa1010 import PA1010
 from sx1262 import SX1262
 from kalman import StateEstimator
 
-import time, gc, esp32, json, vfs, machine, network, uftpd
+import time, gc, json, vfs, machine, network, uftpd
 import adxl375, icm20649
 
 _MODE_INITIALIZE = const(0)
@@ -37,6 +37,7 @@ _MODE_FINISHED = const(5)
 _MODE_WIFI = const(6)
 
 _SENSOR_FREQ_HZ = const(25)
+_PERIOD = const(1000 / _SENSOR_FREQ_HZ)
 
 # Number of seconds to record before launch / after touchdown
 _INITIAL_FINAL_TIME_SEC = const(3)
@@ -74,8 +75,6 @@ _MODE_TO_LED = {
 }
 
 _GPS_CONNECTED = False
-
-boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
 
 ####################################
 # BEGIN Interrupt Service Routines #
@@ -143,22 +142,37 @@ def enable_radio() -> None:
 
 
 def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
-    global nvs, reading_num, recent_altis, apogee
+    global reading_num, recent_altis, apogee
     start_timestamp = time.ticks_us()
     timestamp = int.from_bytes(reading[0], "little")
-    altitude = alti.decode_reading(reading[1]) - initial_altitude
-    estimator.altitude = altitude
-    (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(reading[2])
+    sensor_altitude = alti.decode_reading(reading[1]) - initial_altitude
+    estimator.altitude = sensor_altitude # Give the estimator our sensor reading
+    estimated_altitude = estimator.altitude # Use the estimated altitude
+    (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(
+        reading[2]
+    )
     estimator.acceleration = acc_y
-    packed_reading = pack(">iffffffff", timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp)
-    if mode == _MODE_ASCENT and altitude > apogee:
-        apogee = altitude
-    recent_altis.append(altitude)
+    packed_reading = pack(
+        ">iffffffff",
+        timestamp,
+        sensor_altitude,
+        acc_x,
+        acc_y,
+        acc_z,
+        gyro_x,
+        gyro_y,
+        gyro_z,
+        temp,
+    )
+    if mode == _MODE_ASCENT and sensor_altitude > apogee:
+        apogee = estimated_altitude
+    recent_altis.append(estimated_altitude)
     update_mode()
     if mode == _MODE_LAUNCHPAD:
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        nvs.set_blob(str(reading_num), packed_reading)
+        # TODO: Store reading in memory
+        # nvs.set_blob(str(reading_num), packed_reading)
         reading_num += 1
     end_timestamp = time.ticks_us()
     print(timestamp)
@@ -214,26 +228,6 @@ def _update_neopixel() -> None:
     neopixel.write()
 
 
-def _initialize_nvs() -> None:
-    """Creates a new NVS namespace in the "nvs" global variable
-
-    This sets the `nvs` global variable to an instance of the "Non-Volatile Storage" class. This is ESP-specific functionality that implements a flash-backed keystore. The instance will be configured with a new / empty (except for a sentinel value) namespace. It will also set the `launch_num` variable so the file i/o stuff knows which launch number this was.
-    """
-    global nvs, launch_num
-    # There seems to be no way to check if a namespace exists, so we just check
-    # for a sentinel value until we get an OSError. I don't love using
-    # exceptions for control flow, but here we are.
-    launch_num = 1
-    while True:
-        try:
-            nvs = esp32.NVS(str(launch_num))
-            nvs.get_i32(str(f"namespace {launch_num}"))
-        except OSError:
-            nvs.set_i32(str(f"namespace {launch_num}"), launch_num)
-            nvs.commit()
-            break
-        launch_num += 1
-
 def _init_radio():
     global msg_header, msg_id
     radio = SX1262(1, 36, 35, 37, 8, 18, 9, 17)
@@ -243,7 +237,7 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = 22 #-5 # 22
+    tx_power = 22  # -5 # 22
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -269,29 +263,31 @@ def _init_radio():
 
     return radio
 
+
 def _init_devices() -> None:
     global accel, alti, gyro, gps, radio, clock, _GPS_CONNECTED
     i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
-
+    
+    alti = BMP581(i2c)
+    
     if adxl375.ADXL375_ADDR in connected_devices:
-        accel = ADXL375(i2c) # Use the ADXL if we have multiple accelerometers
+        accel = ADXL375(i2c)  # Use the ADXL if we have multiple accelerometers
     elif icm20649.ICM20649_ADDR in connected_devices:
         accel = ICM20649(i2c)
 
     if icm20649.ICM20649_ADDR in connected_devices:
         if isinstance(accel, ICM20649):
-            gyro = accel # Share object rather than re-create it
+            gyro = accel  # Share object rather than re-create it
         else:
             gyro = ICM20649(i2c)
     
-    alti = BMP581(i2c)
+    accel.initialize()
     alti.initialize()
 
-    # radio = _init_radio() 
+    # radio = _init_radio()
 
-    if accel.addr in connected_devices:
-        accel.initialize()
+        
     if PA1010.I2C_ADDR in connected_devices:
         _GPS_CONNECTED = True
         clock = RTC()
@@ -314,58 +310,63 @@ def _init_devices() -> None:
         )
 
 
-def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, neopixel, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, estimator
+def _init_board():
+    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, neopixel
 
-    mode = _MODE_INITIALIZE
-
-    # Status LEDs #
-    neopixel_pwr_pin = Pin(38, Pin.OUT)
-    neopixel_pwr_pin.on()
-    neopixel_pin = Pin(39, Pin.OUT)
+    # Initialize the status LED
+    neopixel_pin = Pin(40, Pin.OUT)
     neopixel = NeoPixel(neopixel_pin, 1)
-
     _update_neopixel()
 
+    # Overclock the CPU
     machine.freq(240000000)
 
-    sensor_reading_timer = Timer(0)
-    touchdown_timer = Timer(1)
-    # TODO: Set a ~2 minute (5 minute? max of nvs?) timer that forces the thing into landed mode, turning on the buzzer and radio and turning off the sensors
-    radio_timer = Timer(2)
-    buzzer_timer = Timer(3)
+    # Initialize timers
+    sensor_reading_timer = Timer(0)  # Controls reading from sensors
+    touchdown_timer = Timer(1)  # One-shot after landing to get a few extra seconds
+    radio_timer = Timer(2)  # Controls radio broadcasts
+    buzzer_timer = Timer(3)  # Controls the changing pitch of the buzzer
+
+    # Initialize the "boot" button and register its handler
+    boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
     button_pressed = False
+
+    # TODO: Since we don't do any reading or writing in-flight, move this to touchdown?
+    vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
+
+
+def initialize():
+    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator
+
+    mode = _MODE_INITIALIZE
 
     init_time = time.ticks_ms()
     launch_time_ms = init_time  # launch time will be reset when liftoff is detected
 
-    vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
+    _init_board()
 
     with open("/secrets.json", "r") as f:
         secrets = json.loads(f.read())
 
     _init_devices()
 
-    estimator = StateEstimator(40, 1, 4)
-    estimator.acceleration = 9.80665
+    estimator = StateEstimator(_PERIOD, alti.error, accel.error)
 
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_reading(alti.buffer)
     apogee = 0.0
 
-    _initialize_nvs()
-
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
 
     gc.collect()
 
+    enable_sensor_recording()
+
     mode = _MODE_LAUNCHPAD
     _update_neopixel()
-
-    enable_sensor_recording()
 
 
 def have_liftoff(recent_altis: deque) -> bool:
@@ -415,44 +416,12 @@ def _write_initial_data() -> None:
         unpacked = list(unpack(">iffffffff", entry))
         unpacked[0] = unpacked[0] - time_offset_ms
         adjusted_ground_readings.append(pack(">iffffffff", *unpacked))
-    header_str = "timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp\n"
+    header_str = (
+        "timestamp, altitude, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp\n"
+    )
     if _GPS_CONNECTED:
         header_str = str(launch_time_ymdwhms) + "\n" + header_str
     _write_data(list(adjusted_ground_readings), header_str)
-
-
-def _write_nvs_data() -> None:
-    first_entry = _LAUNCHPAD_READINGS + 1
-    if reading_num - first_entry > 100:
-        last_entry = first_entry + 100
-    else:
-        last_entry = reading_num
-
-    while True:
-        packed_readings = []
-        for i in range(first_entry, last_entry):
-            if i == first_entry:
-                # We have to adjust the timestamp of the first entry
-                time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
-                entry = bytearray(36)
-                nvs.get_blob(str(i), entry)
-                unpacked = list(unpack(">iffffffff", entry))
-                unpacked[0] = unpacked[0] - time_offset_ms
-                packed_readings.append(pack(">iffffffff", *unpacked))
-            else:
-                packed_readings.append(bytearray(36))
-                nvs.get_blob(str(i), packed_readings[-1])
-
-        _write_data(packed_readings)
-
-        if last_entry != reading_num:
-            first_entry = last_entry
-            if reading_num - first_entry > 100:
-                last_entry = first_entry + 100
-            else:
-                last_entry = reading_num
-        else:
-            break
 
 
 def _write_data(
@@ -462,22 +431,9 @@ def _write_data(
         if header_str is not None:
             f.write(header_str)
         for packed_reading in packed_readings:
-            f.write(", ".join(str(x) for x in unpack(">iffffffff", packed_reading)) + "\n")
-
-
-def _wipe_nvs_namespace() -> None:
-    """Wipe all sensor readings from non-volatile storage to save space.
-
-    This removes all sensor readings from non-volatile storage (NVS). Note that it leaves the sentinel value so this launch's namespace will not be re-used. This avoids filename conflicts since we use the launch number in both the namespace and final csv filename.
-    """
-    first_entry = _LAUNCHPAD_READINGS + 1
-    last_entry = reading_num
-    for i in range(first_entry, last_entry):
-        if i % 100 == 0:
-            # Things seem to bog down with longer erases, I'm not sure why
-            nvs.commit()
-            gc.collect()
-        nvs.erase_key(str(i))
+            f.write(
+                ", ".join(str(x) for x in unpack(">iffffffff", packed_reading)) + "\n"
+            )
 
 
 def touchdown(timer: Timer) -> None:
@@ -489,8 +445,6 @@ def touchdown(timer: Timer) -> None:
     gc.collect()
 
     _write_initial_data()
-    _write_nvs_data()
-    _wipe_nvs_namespace()
 
     mode = _MODE_FINISHED
     _update_neopixel()

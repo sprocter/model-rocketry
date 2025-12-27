@@ -70,3 +70,13 @@ class BMP581:
             1 - (((pressure_pa / 100) / _BAROMETRIC_PRESSURE) ** 0.190284)
         ) * 44307.69396 # formula from https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf
         return alti_m
+
+    @property
+    def error(self) -> float:
+        """
+        Return the standard deviation of the sensor's error in meters
+
+        :returns: The standard deviation of the decoded readings' error
+        :rtype: float
+        """
+        return 1.0

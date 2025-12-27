@@ -137,3 +137,13 @@ class ICM20649:
             unpacked_reading[5] / _GYRO_SENSITIVITY - _GYRO_Z_ERR,
             (unpacked_reading[6] - _TEMP_OFFSET) / _TEMP_SENSITIVITY + 21,
         )
+
+    @property
+    def error(self) -> float:
+        """
+        Return the standard deviation of the sensor's error in meters per second per second
+
+        :returns: The standard deviation of the decoded readings' error
+        :rtype: float
+        """
+        return 4.0

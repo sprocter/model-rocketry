@@ -20,16 +20,16 @@ class KalmanFilter:
         self.R = R
         self.x = x0
         self.P = P0
-
-    def predict(self, u):
-        u = np.array([[u]])
+    
+    @micropython.native
+    def predict(self, u: float) -> None:
         u -= 9.8
+        u = np.array([[u]])
         self.x = np.dot(self.F, self.x) + np.dot(self.G, u)
         self.P = np.dot(self.F, np.dot(self.P, self.F.T)) + self.Q
-        return self.x
 
-
-    def update(self, z):
+    @micropython.native
+    def update(self, z : float) -> None:
         z = np.array([[z]])
         S = np.dot(self.H, np.dot(self.P, self.H.T)) + self.R
         K = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S))
@@ -37,20 +37,22 @@ class KalmanFilter:
         self.x = self.x + np.dot(K, y)
         I = np.eye(self.P.shape[0])
         self.P = np.dot(I - np.dot(K, self.H), self.P)
-        return self.x
 
 class StateEstimator:
 
-    """Initialize the estimator
-
-    This initializes a Kalman filter using the supplied timestep and errors (as standard deviations)
-
-    :param float period: The time between readings in milliseconds
-    :param float alti_err: The standard deviation of altimeter readings in meters
-    :param float accel_err: The standard deviation of accelerometer readings in meters per second per second
-    """
     def __init__(self, period: float, accel_err: float, alti_err: float):
+        """Initialize the estimator
+
+        This initializes a Kalman filter using the supplied timestep and errors (as standard deviations)
+
+        :param float period: The time between readings in milliseconds
+        :param float alti_err: The standard deviation of altimeter readings in meters
+        :param float accel_err: The standard deviation of accelerometer readings in meters per second per second
+        """
         self.KF = KalmanFilter(period / 1000, accel_err, alti_err)
+        # Change this if you're launching somewhere other than earth 😄
+        self.acceleration = 9.80665 # https://en.wikipedia.org/wiki/Standard_gravity 
+        
 
     @property
     def altitude(self) -> float:
