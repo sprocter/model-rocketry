@@ -43,8 +43,8 @@ class PA1010:
         self.send_command("PMTK251,115200")
         # Re initialize the UART to use the higher baud rate
         self.uart.init(baudrate=115200, tx=6, rx=7)
-        # Get a "recommended minimum" every update, and "fix data" every fifth update
-        self.send_command("PMTK314,0,1,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        # Get a "recommended minimum" and "fix data" every update
+        self.send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
         # Get a new fix every 100 ms
         self.send_command("PMTK220,100")
         # Clear the buffer
@@ -115,6 +115,8 @@ class PA1010:
         self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))
 
+
+machine.freq(240000000)
 gps = PA1010(UART(1, baudrate=9600, tx=6, rx=7))
 gps.initialize()
 
@@ -132,11 +134,15 @@ gps.initialize()
 for i in range(20):
     time.sleep_ms(100)
     start_ts = time.ticks_us()
-    uart_out = gps.uart.readline()
+    uart_out1 = gps.uart.readline()
+    uart_out2 = gps.uart.readline()
     uart_ts = time.ticks_us()
-    gps._decode_sentence(uart_out.decode('ascii'))
-    # gps._decode_sentence(sentences[i])
+    # gps._decode_sentence(uart_out.decode('ascii'))
+    gps._decode_sentence("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n")
+    gps._decode_sentence("$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n")
     parsed_ts = time.ticks_us()
+    print(f"UART1: {uart_out1}")
+    print(f"UART2: {uart_out2}")
     print(f"UART read time: {time.ticks_diff(uart_ts, start_ts)}")
     print(f"Parse time (fastgps): {time.ticks_diff(parsed_ts, uart_ts)}")
     gc.collect()

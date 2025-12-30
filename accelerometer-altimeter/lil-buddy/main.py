@@ -16,14 +16,16 @@ from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque
 from micropython import schedule, const
+from esp32 import mcu_temperature
 from math import sqrt
 
 from bmp581 import BMP581
 from adxl375 import ADXL375
 from icm20649 import ICM20649
+from max17048 import MAX17048
 from pa1010 import PA1010
 from sx1262 import SX1262
-from kalman import StateEstimator
+from marg import StateEstimator
 
 import time, gc, json, vfs, machine, network, uftpd
 import adxl375, icm20649
@@ -92,8 +94,11 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
+    i2cstart_ts = time.ticks_us()
     alti.read_raw()
     accel.read_raw()
+    i2cend_ts = time.ticks_us()
+    print(f"Alti and accel took {time.ticks_diff(i2cend_ts, i2cstart_ts)}μs to read")
 
     schedule(
         process_reading,
@@ -151,7 +156,8 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
     (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(
         reading[2]
     )
-    estimator.acceleration = acc_y
+    estimator.acceleration = [acc_x, acc_y, acc_z]
+    estimator.gyro = [gyro_x, gyro_y, gyro_z]
     packed_reading = pack(
         ">iffffffff",
         timestamp,
@@ -175,7 +181,10 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
         # nvs.set_blob(str(reading_num), packed_reading)
         reading_num += 1
     end_timestamp = time.ticks_us()
-    print(timestamp)
+    gc.collect()
+    print(f"Altitude: {estimator.altitude}m\tVelocity: {estimator.velocity}m/s\tAcceleration: {estimator.acceleration}m/s/s")
+    print(f"Heading: {estimator.heading}°\tPitch: {estimator.pitch}°/s\tRoll: {estimator.roll}°")
+    print(f"process_reading time: {time.ticks_diff(end_timestamp, start_timestamp)}μs, MCU temperature: {mcu_temperature()}, Battery: {batt_monitor.charge_percent}%")
 
 
 def update_mode() -> None:
@@ -265,7 +274,7 @@ def _init_radio():
 
 
 def _init_devices() -> None:
-    global accel, alti, gyro, gps, radio, clock, _GPS_CONNECTED
+    global accel, alti, gyro, gps, radio, batt_monitor, clock, _GPS_CONNECTED
     i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
     
@@ -286,10 +295,10 @@ def _init_devices() -> None:
     alti.initialize()
 
     # radio = _init_radio()
-
         
     if PA1010.I2C_ADDR in connected_devices:
         _GPS_CONNECTED = True
+        # TODO: Move clock initialization to the board initializer?
         clock = RTC()
         gps = PA1010(i2c)
         gps.set_update_rate(1)
@@ -308,6 +317,10 @@ def _init_devices() -> None:
                 0,  # tzinfo, ignored
             )
         )
+    
+    # Even though the battery monitor is on the board, it communicates via I2C 
+    # so we initialize it here, rather than _init_board
+    batt_monitor = MAX17048(i2c)
 
 
 def _init_board():
