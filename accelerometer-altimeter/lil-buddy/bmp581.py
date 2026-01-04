@@ -1,7 +1,7 @@
 """A very simple driver for the BMP581 Barometric Pressure Sensor
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -44,7 +44,7 @@ class BMP581:
             "<B", self.i2c.readfrom_mem(_BMP581_ADDR, _BMP581_CHIPID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
-            raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
+            raise OSError(f"BMP581 has incorrect device id {actual_device_id}")
 
         # is "non-stop" the same as continuous? I think so?
         # disable deep standby, ODR = 25.005hz, "non-stop" mode.
