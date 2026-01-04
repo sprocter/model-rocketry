@@ -1,7 +1,7 @@
 """A script for a model rocket altimeter / accelerometer
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -22,6 +22,7 @@ from math import sqrt
 from bmp581 import BMP581
 from adxl375 import ADXL375
 from icm20649 import ICM20649
+from mmc5983ma import MMC5983MA
 from max17048 import MAX17048
 from pa1010 import PA1010
 from sx1262 import SX1262
@@ -81,7 +82,7 @@ _MODE_TO_LED = {
 _GPS_CONNECTED = False
 
 # 2M Floats is 8MiB, which is how much PSRAM we have.
-# This gives us over half an hour of data storing 19 values per reading, 50 
+# This gives us over half an hour of data storing 20 values per reading, 50
 # times a second -- we cannot save that much to flash, so it's kind of moot.
 # TODO: Reduce this?
 _BUFFER_SIZE = const(2000000)
@@ -104,12 +105,14 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 def get_sensor_readings(timer: Timer) -> None:
     alti.read_raw()
     accel.read_raw()
+    mag.read_raw()
 
     schedule(
         process_reading,
         (
             time.ticks_diff(time.ticks_ms(), launch_time_ms).to_bytes(3, "little"),
             alti.buffer,
+            mag.buffer,
             accel.buffer,
         ),
     )
@@ -151,81 +154,88 @@ def enable_radio() -> None:
     radio_timer.init(mode=Timer.PERIODIC, period=60000, callback=send_radio_message)
 
 
-def process_reading(reading: tuple[bytes, bytearray, bytearray]) -> None:
+def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> None:
     global reading_num, recent_altis, apogee
 
-    # ts = [0] * 13
-    # ts[0] = time.ticks_us()
+    ts = [0] * 13
+    ts[0] = time.ticks_us()
 
     timestamp = int.from_bytes(reading[0], "little")
-    # ts[1] = time.ticks_us()
+    # print(f"Timestamp: {timestamp}ms")
+    ts[1] = time.ticks_us()
     sensor_altitude = alti.decode_reading(reading[1]) - initial_altitude
-    # ts[2] = time.ticks_us()
-    estimator.altitude = sensor_altitude  # Give the estimator our sensor reading
-    # ts[3] = time.ticks_us()
-    estimated_altitude = estimator.altitude  # Use the estimated altitude
-    # ts[4] = time.ticks_us()
+    ts[2] = time.ticks_us()
+    (mag_x, mag_y, mag_z) = mag.decode_reading(reading[2])
+    ts[3] = time.ticks_us()
     (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(
-        reading[2]
+        reading[3]
     )
-    # ts[5] = time.ticks_us()
+    estimator.mag = [mag_x, mag_y, mag_z]
+    ts[4] = time.ticks_us()
     estimator.acceleration = [acc_x, acc_y, acc_z]
-    # ts[6] = time.ticks_us()
+    ts[5] = time.ticks_us()
     estimator.gyro = [gyro_x, gyro_y, gyro_z]
-    # ts[7] = time.ticks_us()
+    ts[6] = time.ticks_us()
+    estimator.altitude = sensor_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
+    estimated_altitude = estimator.altitude  # Use the estimated altitude
+    ts[7] = time.ticks_us()
     if mode == _MODE_ASCENT and estimated_altitude > apogee:
         apogee = estimated_altitude
-    # ts[8] = time.ticks_us()
+    ts[8] = time.ticks_us()
     recent_altis.append(estimated_altitude)
-    # ts[9] = time.ticks_us()
+    ts[9] = time.ticks_us()
     update_mode()
-    # ts[10] = time.ticks_us()
+    ts[10] = time.ticks_us()
     if mode == _MODE_LAUNCHPAD:
         # TODO: repack? have separate dequeues for each tracked variable?
         # ground_readings.append(packed_reading)
-        idx_start = reading_num * 19
-        buff.store(idx_start, acc_x)
+        idx_start = reading_num * 20
+        buff.store(idx_start + 0, acc_x)
         buff.store(idx_start + 1, acc_y)
         buff.store(idx_start + 2, acc_z)
         buff.store(idx_start + 3, gyro_x)
         buff.store(idx_start + 4, gyro_y)
         buff.store(idx_start + 5, gyro_z)
-        buff.store(idx_start + 6, 0.0)
-        buff.store(idx_start + 7, 0.0)
-        buff.store(idx_start + 8, 0.0)
+        buff.store(idx_start + 6, mag_x)
+        buff.store(idx_start + 7, mag_y)
+        buff.store(idx_start + 8, mag_z)
         buff.store(idx_start + 9, sensor_altitude)
-        buff.store(idx_start + 10, 0.0)
+        buff.store(idx_start + 10, 0.0)  # GPS Altitude
+        buff.store(idx_start + 11, 0.0)  # Ambient Temperature
 
-        buff.store(idx_start + 11, 0.0)
-        buff.store(idx_start + 12, 0.0)
+        # This is interesting but it takes 2-2.5ms to read so maybe not 10% of the period budget interesting
+        buff.store(idx_start + 12, 1.0 * mcu_temperature()) 
+        buff.store(idx_start + 13, 0.0)  # Battery Charge
 
-        buff.store(idx_start + 13, estimator.heading)
-        buff.store(idx_start + 14, estimator.pitch)
-        buff.store(idx_start + 15, estimator.roll)
-        buff.store(idx_start + 16, estimated_altitude)
-        buff.store(idx_start + 17, estimator.velocity)
+        buff.store(idx_start + 14, estimator.heading)
+        buff.store(idx_start + 15, estimator.pitch)
+        buff.store(idx_start + 16, estimator.roll)
+        buff.store(idx_start + 17, estimated_altitude)
+        buff.store(idx_start + 18, estimator.velocity)
 
-        buff.store(idx_start + 18, float(timestamp))
+        buff.store(idx_start + 19, float(timestamp))
         reading_num += 1
     elif (
         mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN or True
     ):
         # TODO: Actually store the readings here once the ground queue is re-set-up
         pass
-    # ts[11] = time.ticks_us()
+    ts[11] = time.ticks_us()
     gc.collect()
-    # ts[12] = time.ticks_us()
+    ts[12] = time.ticks_us()
 
-    # print(f"\n==========================================================\n")
-    # for i in range(len(ts) - 1):
-    #     print(f"Duration of {i} - {i + 1}: {time.ticks_diff(ts[i+1], ts[i])}μs")
-    
-    # for i in range(19):
-    #     print(f"Value {buff.retrieve_from((reading_num-1)*19 + i)} retrieved from {(reading_num-1)*19 + i}")
-    
-    # print(
-    #     f"Total Duration of Reading {reading_num}: {time.ticks_diff(ts[12], ts[0])}μs"
-    # )
+    # if reading_num % 50 == 0:
+    #     print(f"\n==========================================================\n")
+    #     for i in range(len(ts) - 1):
+    #         print(f"Duration of {i} - {i + 1}: {time.ticks_diff(ts[i+1], ts[i])}μs")
+
+    #     for i in range(20):
+    #         print(f"Value {buff.retrieve_from((reading_num-1)*19 + i)} retrieved from {(reading_num-1)*19 + i}")
+
+    #     print(
+    #         f"Total Duration of Reading {reading_num}: {time.ticks_diff(ts[12], ts[0])}μs"
+    #     )
+
 
 def update_mode() -> None:
     global mode
@@ -314,11 +324,12 @@ def _init_radio():
 
 
 def _init_devices() -> None:
-    global accel, alti, gyro, gps, radio, batt_monitor, clock, _GPS_CONNECTED
+    global accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED
     i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
 
     alti = BMP581(i2c)
+    mag = MMC5983MA(i2c)
 
     if adxl375.ADXL375_ADDR in connected_devices:
         accel = ADXL375(i2c)  # Use the ADXL if we have multiple accelerometers
@@ -331,32 +342,34 @@ def _init_devices() -> None:
         else:
             gyro = ICM20649(i2c)
 
-    accel.initialize()
     alti.initialize()
+    mag.initialize()
+    #mag.calibrate()
+    accel.initialize()
 
     # radio = _init_radio()
 
-    if PA1010.I2C_ADDR in connected_devices:
-        _GPS_CONNECTED = True
-        # TODO: Move clock initialization to the board initializer?
-        clock = RTC()
-        gps = PA1010(i2c)
-        gps.set_update_rate(1)
-        while not gps.update():
-            time.sleep(5)
-        gps.update()  # We have a fix but it could be up to 5s outdated
-        clock.init(
-            (
-                gps.year,
-                gps.month,
-                gps.day,
-                gps.hour,
-                gps.minute,
-                gps.second,
-                0,  # microsecond, ignored
-                0,  # tzinfo, ignored
-            )
-        )
+    # if PA1010.I2C_ADDR in connected_devices:
+    #     _GPS_CONNECTED = True
+    #     # TODO: Move clock initialization to the board initializer?
+    #     clock = RTC()
+    #     gps = PA1010(i2c)
+    #     gps.set_update_rate(1)
+    #     while not gps.update():
+    #         time.sleep(5)
+    #     gps.update()  # We have a fix but it could be up to 5s outdated
+    #     clock.init(
+    #         (
+    #             gps.year,
+    #             gps.month,
+    #             gps.day,
+    #             gps.hour,
+    #             gps.minute,
+    #             gps.second,
+    #             0,  # microsecond, ignored
+    #             0,  # tzinfo, ignored
+    #         )
+    #     )
 
     # Even though the battery monitor is on the board, it communicates via I2C
     # so we initialize it here, rather than _init_board

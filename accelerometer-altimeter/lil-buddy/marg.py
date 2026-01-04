@@ -3,7 +3,7 @@
 Kalman filter implementation from vikas m at geeksforgeeks.com
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -29,10 +29,12 @@ class StateEstimator:
         :param float accel_err: The standard deviation of accelerometer readings in meters per second per second
         """
         self.KF = KalmanFilter(period / 1000, accel_err, alti_err)
-        self.transpose = (1, 2, 0)  # Y -> Z, Z -> X, X -> Y
-        self.invert = (True, False, False)  # Invert X (I think?)
+        # self.transpose = (1, 2, 0)  # Y -> Z, Z -> X, X -> Y
+        # self.transpose = (0, 1, 2)  # No changes
+        # self.invert = (True, False, False)  # Invert X (I think?)
         self.acceleration = [0.0, 0.0, 0.0]
-        self.gyro = [0.0, 0.0, 0.0]
+        self.gyroscope = [0.0, 0.0, 0.0]
+        self.magnetometer = [0.0, 0.0, 0.0]
         self.fuse = Fusion()
 
     @property
@@ -60,24 +62,35 @@ class StateEstimator:
         return self._acceleration  # Just returns the cached sensor reading
 
     @property
-    def gyro(self) -> float:
+    def gyroscope(self) -> float:
         return self._gyro  # Just returns the cached sensor reading
+    
+    @property
+    def magnetometer(self) -> float:
+        return self._magnetometer  # Just returns the cached sensor reading
 
     @altitude.setter
     def altitude(self, value) -> None:
         self.KF.predict(self.acceleration[1]) # TODO: Should we use more than the Y value? Adjust for pitch?
         self.KF.update(value)
-        self.fuse.update_nomag(
-            *orientate(self.transpose, self.invert, self.acceleration, self.gyro)
+        self.fuse.update(
+            self.acceleration, 
+            # The fusion module seems to want the Z axis to spin the other way
+            orientate((0,1,2), (False, False, True), self.gyroscope)[0],
+            self.magnetometer
         )
 
     @acceleration.setter
     def acceleration(self, value) -> None:
         self._acceleration = value
 
-    @gyro.setter
-    def gyro(self, value) -> None:
+    @gyroscope.setter
+    def gyroscope(self, value) -> None:
         self._gyro = value
+
+    @magnetometer.setter
+    def magnetometer(self, value) -> None:
+        self._magnetometer = value
 
 
 
