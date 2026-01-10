@@ -106,6 +106,8 @@ def get_sensor_readings(timer: Timer) -> None:
     alti.read_raw()
     accel.read_raw()
     mag.read_raw()
+    if(reading_num % 5 == 0):
+        gps.read_raw()
 
     schedule(
         process_reading,
@@ -114,6 +116,7 @@ def get_sensor_readings(timer: Timer) -> None:
             alti.buffer,
             mag.buffer,
             accel.buffer,
+            gps.buffer,
         ),
     )
 
@@ -154,16 +157,17 @@ def enable_radio() -> None:
     radio_timer.init(mode=Timer.PERIODIC, period=60000, callback=send_radio_message)
 
 
-def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> None:
+def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray, tuple]) -> None:
     global reading_num, recent_altis, apogee
 
-    ts = [0] * 13
+    ts = [0] * 14
     ts[0] = time.ticks_us()
 
     timestamp = int.from_bytes(reading[0], "little")
     # print(f"Timestamp: {timestamp}ms")
     ts[1] = time.ticks_us()
-    sensor_altitude = alti.decode_reading(reading[1]) - initial_altitude
+    (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
+    barometric_altitude = raw_altitude - initial_altitude 
     ts[2] = time.ticks_us()
     (mag_x, mag_y, mag_z) = mag.decode_reading(reading[2])
     ts[3] = time.ticks_us()
@@ -176,7 +180,7 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> N
     ts[5] = time.ticks_us()
     estimator.gyro = [gyro_x, gyro_y, gyro_z]
     ts[6] = time.ticks_us()
-    estimator.altitude = sensor_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
+    estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
     estimated_altitude = estimator.altitude  # Use the estimated altitude
     ts[7] = time.ticks_us()
     if mode == _MODE_ASCENT and estimated_altitude > apogee:
@@ -186,6 +190,13 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> N
     ts[9] = time.ticks_us()
     update_mode()
     ts[10] = time.ticks_us()
+    if reading_num % 5 == 1:
+        # Note that we decode the GPS reading when reading_num % 5 == 1, but we 
+        # take the reading when reading_num % 5 == 0. We do this to split 
+        # reading time (~1ms) and computation time (~1.2ms) across two periods. 
+        gps.decode_reading(reading[4])
+        # gps.decode_reading(("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n", "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n"))
+    ts[11] = time.ticks_us()
     if mode == _MODE_LAUNCHPAD:
         # TODO: repack? have separate dequeues for each tracked variable?
         # ground_readings.append(packed_reading)
@@ -199,13 +210,12 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> N
         buff.store(idx_start + 6, mag_x)
         buff.store(idx_start + 7, mag_y)
         buff.store(idx_start + 8, mag_z)
-        buff.store(idx_start + 9, sensor_altitude)
-        buff.store(idx_start + 10, 0.0)  # GPS Altitude
-        buff.store(idx_start + 11, 0.0)  # Ambient Temperature
+        buff.store(idx_start + 9, barometric_altitude)
+        buff.store(idx_start + 10, gps.altitude)
+        buff.store(idx_start + 11, ambient_temp)
 
-        # This is interesting but it takes 2-2.5ms to read so maybe not 10% of the period budget interesting
-        buff.store(idx_start + 12, 1.0 * mcu_temperature()) 
-        buff.store(idx_start + 13, 0.0)  # Battery Charge
+        buff.store(idx_start + 12, gps.heading)
+        buff.store(idx_start + 13, gps.speed)
 
         buff.store(idx_start + 14, estimator.heading)
         buff.store(idx_start + 15, estimator.pitch)
@@ -220,20 +230,20 @@ def process_reading(reading: tuple[bytes, bytearray, bytearray, bytearray]) -> N
     ):
         # TODO: Actually store the readings here once the ground queue is re-set-up
         pass
-    ts[11] = time.ticks_us()
-    gc.collect()
     ts[12] = time.ticks_us()
+    gc.collect()
+    ts[13] = time.ticks_us()
 
-    # if reading_num % 50 == 0:
+    # if reading_num % 1 == 0:
     #     print(f"\n==========================================================\n")
     #     for i in range(len(ts) - 1):
     #         print(f"Duration of {i} - {i + 1}: {time.ticks_diff(ts[i+1], ts[i])}μs")
 
     #     for i in range(20):
-    #         print(f"Value {buff.retrieve_from((reading_num-1)*19 + i)} retrieved from {(reading_num-1)*19 + i}")
+    #         print(f"Value {buff.retrieve_from((reading_num-1)*20 + i)} retrieved from {(reading_num-1)*20 + i}")
 
     #     print(
-    #         f"Total Duration of Reading {reading_num}: {time.ticks_diff(ts[12], ts[0])}μs"
+    #         f"Total Duration of Reading {reading_num}: {time.ticks_diff(ts[13], ts[0])}μs"
     #     )
 
 
@@ -330,6 +340,7 @@ def _init_devices() -> None:
 
     alti = BMP581(i2c)
     mag = MMC5983MA(i2c)
+    gps = PA1010(16, 15)
 
     if adxl375.ADXL375_ADDR in connected_devices:
         accel = ADXL375(i2c)  # Use the ADXL if we have multiple accelerometers
@@ -346,8 +357,11 @@ def _init_devices() -> None:
     mag.initialize()
     #mag.calibrate()
     accel.initialize()
+    gps.initialize()
 
     # radio = _init_radio()
+
+    # TODO: Re-do gps connection check and clock initialization now that we use GPS over UART
 
     # if PA1010.I2C_ADDR in connected_devices:
     #     _GPS_CONNECTED = True
@@ -426,14 +440,14 @@ def initialize():
 
     reading_num = _LAUNCHPAD_READINGS + 1
     alti.read_raw()
-    initial_altitude = alti.decode_reading(alti.buffer)
+    initial_altitude = alti.decode_alti(alti.buffer)
     apogee = 0.0
 
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
 
     gc.collect()
-
+    gps.clear_buffer()
     enable_sensor_recording()
 
     mode = _MODE_LAUNCHPAD

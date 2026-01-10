@@ -11,7 +11,7 @@ Adapted from
    Original code: https://github.com/adafruit/Adafruit_CircuitPython_GPS
 
 --------------------------------------------------------------------------------
-(Modifications to 1 & 2 and new portions) Copyright (C) 2025 Sam Procter
+(Modifications to 1 & 2 and new portions) Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -38,21 +38,43 @@ class PA1010:
     def __init__(self, uart_tx, uart_rx):
         self.tx = uart_tx
         self.rx = uart_rx
+        self.buffer = (b'', b'')
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
     def initialize(self):
         # Increase the baud rate to the maximum
-        self.send_command("PMTK251,115200")
+        self._send_command("PMTK251,115200")
         # Re initialize the UART to use the higher baud rate
         self.uart.init(baudrate=115200, tx=self.tx, rx=self.rx)
         # Get a "recommended minimum" and "fix data" every update
-        self.send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        self._send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
         # Get a new fix every 100 ms
-        self.send_command("PMTK220,100")
+        self._send_command("PMTK220,100")
         # Clear the buffer
         self.uart.read()
 
-    def send_command(self, command, add_checksum=True):
+    def read_raw(self):
+        self.buffer = (self.uart.readline(), self.uart.readline())
+
+    def decode_reading(self, reading: tuple[bytearray, bytearray]) -> None:
+        self._decode_sentence(reading[0])
+        self._decode_sentence(reading[1])
+
+    def clear_buffer(self) -> None:
+        self.uart.read()
+
+    def _decode_sentence(self, buf):
+        m = GGA_DECODE.match(buf)
+        if m is not None:
+            # print("GGA parse ok!")
+            self._set_data_from_gga(m)
+        else:
+            m = RMC_DECODE.match(buf)
+            if m is not None:
+                # print("RMC parse ok!")
+                self._set_data_from_rmc(m)
+
+    def _send_command(self, command, add_checksum=True):
         """Send a command string
         If add_checksum is True (the default) a NMEA checksum will automatically be computed and added.
         """
@@ -70,19 +92,7 @@ class PA1010:
             buf += b"*"  # Delimits checksum value
             buf += bytes(f"{checksum:02x}".upper(), "ascii")
         buf += b"\r\n"
-        print(f'Writing "{buf}"')
         self.uart.write(buf)
-
-    def _decode_sentence(self, buf):
-        m = GGA_DECODE.match(buf)
-        if m is not None:
-            # print("GGA parse ok!")
-            self._set_data_from_gga(m)
-        else:
-            m = RMC_DECODE.match(buf)
-            if m is not None:
-                # print("RMC parse ok!")
-                self._set_data_from_rmc(m)
 
     def _set_data_from_rmc(self, m):
         # Modifications by Sam Procter, 2025:
@@ -117,36 +127,3 @@ class PA1010:
         self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))
 
-
-# machine.freq(240000000)
-# gps = PA1010(UART(1, baudrate=9600, tx=6, rx=7))
-# gps.initialize()
-
-# sentences = [ # Sentences copied from datasheet
-#     '$GNRMC,064951.000,A,2307.1256,N,12016.4438,E,0.03,165.48,260406,3.05,W\n,A*2C',
-#     '$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n','$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n',
-#     '$GNRMC,064951.000,A,2307.1256,N,12016.4438,E,0.03,165.48,260406,3.05,W\n,A*2C',
-#     '$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n','$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n',
-#     '$GNRMC,064951.000,A,2307.1256,N,12016.4438,E,0.03,165.48,260406,3.05,W\n,A*2C',
-#     '$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n','$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n','$GNRMC,064951.000,A,2307.1256,N,12016.4438,E,0.03,165.48,260406,3.05,W\n,A*2C',
-#     '$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n',
-#     '$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n']
-
-# # for i in range(len(sentences)):
-# for i in range(20):
-#     time.sleep_ms(100)
-#     start_ts = time.ticks_us()
-#     uart_out1 = gps.uart.readline()
-#     uart_out2 = gps.uart.readline()
-#     uart_ts = time.ticks_us()
-#     # gps._decode_sentence(uart_out.decode('ascii'))
-#     gps._decode_sentence("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n")
-#     gps._decode_sentence("$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n")
-#     parsed_ts = time.ticks_us()
-#     print(f"UART1: {uart_out1}")
-#     print(f"UART2: {uart_out2}")
-#     print(f"UART read time: {time.ticks_diff(uart_ts, start_ts)}")
-#     print(f"Parse time (fastgps): {time.ticks_diff(parsed_ts, uart_ts)}")
-#     gc.collect()
-
-# gps.uart.deinit()

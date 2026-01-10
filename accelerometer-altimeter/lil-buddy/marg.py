@@ -73,6 +73,7 @@ class StateEstimator:
     def altitude(self, value) -> None:
         self.KF.predict(self.acceleration[1]) # TODO: Should we use more than the Y value? Adjust for pitch?
         self.KF.update(value)
+        # TODO: This should be "orientated" once the mounting / payload position is known / established
         self.fuse.update(
             self.acceleration, 
             # The fusion module seems to want the Z axis to spin the other way
