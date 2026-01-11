@@ -24,6 +24,7 @@ static bool initialized = false;
 // Store the given value at the given index
 static mp_obj_t store(mp_obj_t idx_obj, mp_obj_t value_obj) {
     if(initialized){
+        // TODO: Add bounds checking (0 <= idx < size)
         int idx = mp_obj_get_int(idx_obj);
         float value = mp_obj_get_float(value_obj);
         buffer[idx] = value;
@@ -34,6 +35,7 @@ static mp_obj_t store(mp_obj_t idx_obj, mp_obj_t value_obj) {
 // Retrieve the float from the given index
 static mp_obj_t retrieve_from(mp_obj_t idx_obj) {
     if(initialized){
+        // TODO: Add bounds checking (0 <= idx < size)
         int idx = mp_obj_get_int(idx_obj);
         float ret_val = buffer[idx];
         return mp_obj_new_float(ret_val);
@@ -45,6 +47,7 @@ static mp_obj_t retrieve_from(mp_obj_t idx_obj) {
 // Initialize the buffer
 static mp_obj_t init_buffer(mp_obj_t size_obj) {
     if(!initialized){
+        // TODO: Make size a global
         int size = mp_obj_get_int(size_obj);
         buffer = malloc(size * sizeof(float));
         initialized = true;

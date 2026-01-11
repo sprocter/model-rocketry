@@ -47,11 +47,15 @@ class StateEstimator:
 
     @property
     def heading(self) -> float:
-        return self.fuse.heading
+        h = self.fuse.heading + 9.283
+        if h < 0:
+            return 360+h
+        else:
+            return h
 
     @property
     def pitch(self) -> float:
-        return self.fuse.pitch
+        return -1*self.fuse.pitch
 
     @property
     def roll(self) -> float:
