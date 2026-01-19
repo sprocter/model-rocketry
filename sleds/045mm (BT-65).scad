@@ -67,9 +67,24 @@ module wings(width, length) {
     }
 }
 
-// The board is the flat part + the wings
+// Simplified version of the round edges which hold the sled in the payload, with added percent parameter to control how much of the wing to inclde.
+// percent should be float between 0 and 1, percent of the width to remove from the wings. The value 1 means the wings are the full cylinder
+module wings2(width, length,percent) {
+
+    
+    //Walls
+    difference() {
+        cylinder(h = length, d = width);            
+        cylinder(h = length + punch_depth, d = width-BOARD_DEPTH);
+            cube([width, width*percent, 999],center=true);
+     }
+
+};
+
+
+// The board is the flat part
 module board(payload_width, payload_length, aft_overhang_length, aft_overhang_width) {
-    wings(payload_width, payload_length);        
+    //wings(payload_width, payload_length);        
     translate([-1 * h, 0, -1 * BOARD_DEPTH / 2]){
         cube([payload_width - punch_depth, payload_length, BOARD_DEPTH]);
     }
@@ -106,6 +121,38 @@ module extended_board () {
     }
 }
 
+module structural_beam(){
+    intersection(){
+        cube([BOARD_DEPTH*2,payload_width,BOARD_DEPTH*2],center=true);
+        cylinder(h=BOARD_DEPTH,d=payload_width);
+    };
+}
+
+
+module wing_block() {
+        //top mount - for structural support
+        // Structural base
+        
+        difference() {
+            union(){    
+                wings2(payload_width, payload_length,.8);
+                structural_beam();
+            };
+            translate([0,-(payload_width)/2+.025,0]) {
+                rotate([90,0,90]) {
+                    board(payload_width,payload_length,0);
+                };
+            };
+       };
+
+}
+
+
+// Setup to output two different stl files - the wings and the boards
+// Only the wings
+//wing_block();
+
+//Only the board
 difference() {
     extended_board();
     // Add a "dash" so the velcro strap fits nicely
