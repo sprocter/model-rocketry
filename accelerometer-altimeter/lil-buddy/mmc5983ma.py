@@ -32,7 +32,8 @@ class MMC5983MA:
 
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
-        self.buffer = bytearray(7)  # Three 18 bit floats split across 7 bytes :|
+        # Mag values are three 18 bit floats split across 7 bytes 😑
+        self.buffer = bytearray(7)  
         self.addr = _MMC5983MA_ADDR
 
         # "Local" offsets, set using the chip's SET and RESET functionality
@@ -53,7 +54,7 @@ class MMC5983MA:
     def _calculate_offsets(self) -> None:
         """Calculate the device's local offsets and store them
 
-        This implements the procedure (described on pg 18 of the datasheet) for calculating the three axes' offsets. It modifies the _x|y|z_offset variables, which are used in the decode_reading function.
+        This implements the procedure (described on pg 18 of the datasheet) for calculating the three axes' offsets. It modifies the _x|y|z_offset variables, which are used in the decode_mag function.
         """
         # "Set" operation
         # 0 0 0 0 1 0 0 0
@@ -64,7 +65,7 @@ class MMC5983MA:
         self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
-        (x1, y1, z1) = self.decode_reading(self.buffer)
+        (x1, y1, z1) = self.decode_mag(self.buffer)
 
         # "Reset" operation
         # 0 0 0 1 0 0 0 0
@@ -75,7 +76,7 @@ class MMC5983MA:
         self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
-        (x2, y2, z2) = self.decode_reading(self.buffer)
+        (x2, y2, z2) = self.decode_mag(self.buffer)
 
         self._x_offset = (x1 + x2) / 2
         self._y_offset = (y1 + y2) / 2
@@ -129,7 +130,7 @@ class MMC5983MA:
 
         while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
             self.read_raw()
-            (x, y, z) = self.decode_reading(self.buffer)
+            (x, y, z) = self.decode_mag(self.buffer)
             if x < x_min:
                 x_min = x
             elif x > x_max:
@@ -156,13 +157,10 @@ class MMC5983MA:
         self._z_si_offset = avg_hi_offset / self._z_hi_offset
 
     def read_raw(self) -> None:
-        if self.i2c.readfrom_mem(_MMC5983MA_ADDR, 0x08, 1)[0] & 0x01 != 1:
-            # This should never happen, if it does make sure you aren't reading
-            # faster than the measurement frequency
-            print("MEASUREMENT ERROR: MEASUREMENT TAKEN BUT NOT READY")
         self.i2c.readfrom_mem_into(_MMC5983MA_ADDR, _MMC5983MA_XOUT0, self.buffer)
 
-    def decode_reading(self, reading: bytearray) -> tuple[float, float, float]:
+    @micropython.native
+    def decode_mag(self, reading: bytearray) -> tuple[float, float, float]:
         x_raw = reading[0] << 10 | reading[1] << 2 | reading[6] >> 6
         y_raw = reading[2] << 10 | reading[3] << 2 | ((reading[6] >> 4) & 0x03)
         z_raw = reading[4] << 10 | reading[5] << 2 | ((reading[6] >> 2) & 0x03)

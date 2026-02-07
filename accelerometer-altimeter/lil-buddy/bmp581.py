@@ -66,6 +66,7 @@ class BMP581:
     def decode_reading(self, reading: bytearray) -> tuple[float, float]:
         return (self.decode_alti(reading), self.decode_temp(reading))
 
+    @micropython.native
     def decode_alti(self, reading: bytearray) -> float:
         pressure_pa = (reading[5] << 16 | reading[4] << 8 | reading[3]) / 64.0
         alti_m = (
@@ -73,6 +74,7 @@ class BMP581:
         ) * 44307.69396 # formula from https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf
         return alti_m
 
+    @micropython.native
     def decode_temp(self, reading: bytearray) -> float:
         temp_c = (reading[2] << 16 | reading[1] << 8 | reading[0]) / 65536.0
         return temp_c
