@@ -27,6 +27,15 @@ _MMC5983MA_CTRL2 = const(0x0B)  # pg 15
 
 _EXPECTED_DEVICE_ID = const(48)  # pg 16, Product ID1
 
+# Hard iron (HI) and Soft iron (SI) offsets
+# Calculate these once you have your board built / mounted using the
+# print_mmc5983_offsets() function in the utilities.py file
+_X_HI_OFFSET = const(5784.0)
+_Y_HI_OFFSET = const(-1682.0)
+_Z_HI_OFFSET = const(-2449.5)
+_X_SI_OFFSET = const(0.09523398)
+_Y_SI_OFFSET = const(-0.3274871)
+_Z_SI_OFFSET = const(-0.22487582)
 
 class MMC5983MA:
 
@@ -36,20 +45,10 @@ class MMC5983MA:
         self.buffer = bytearray(7)  
         self.addr = _MMC5983MA_ADDR
 
-        # "Local" offsets, set using the chip's SET and RESET functionality
+        # "Local" offsets, set automatically during initialization using the chip's SET and RESET functionality
         self._x_offset = 0
         self._y_offset = 0
         self._z_offset = 0
-
-        # "Hard Iron" Offsets, set using the calibration function
-        self._x_hi_offset = 0
-        self._y_hi_offset = 0
-        self._z_hi_offset = 0
-
-        # "Soft Iron" Offsets, set using the calibration function
-        self._x_si_offset = 1
-        self._y_si_offset = 1
-        self._z_si_offset = 1
 
     def _calculate_offsets(self) -> None:
         """Calculate the device's local offsets and store them
@@ -113,49 +112,6 @@ class MMC5983MA:
 
         time.sleep_ms(10)  # Block until first reading can be taken, they take 8ms
 
-    def calibrate(self, duration=10):
-        """Attempt to calculate hard-iron and soft-iron distortion in order to compensate for it.
-
-        This takes samples over the user-specified number of seconds (default 10) and then does some math to figure out hard and soft iron distortion. Offsets / scale factors to compensate for that distortion are then stored in class variables and used to adjust future readings.
-
-        Note that the soft iron distortion is a "good enough" implementation that does not do an actual ellipsoid fit.
-
-        :param int duration: How long to run the calibration for in seconds
-
-        """
-        start_ts = time.ticks_ms()
-
-        x_min = y_min = z_min = 999999999
-        x_max = y_max = z_max = -999999999
-
-        while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
-            self.read_raw()
-            (x, y, z) = self.decode_mag(self.buffer)
-            if x < x_min:
-                x_min = x
-            elif x > x_max:
-                x_max = x
-            if y < y_min:
-                y_min = y
-            elif y > y_max:
-                y_max = y
-            if z < z_min:
-                z_min = z
-            elif z > z_max:
-                z_max = z
-            time.sleep_ms(20)
-
-        # "Hard iron" distortion
-        self._x_hi_offset = (x_min + x_max) / 2
-        self._y_hi_offset = (y_min + y_max) / 2
-        self._z_hi_offset = (z_min + z_max) / 2
-
-        # "Soft iron" distortion -- uses scale biases, would be more accurate with an ellipsoid fit. See https://www.appelsiini.net/2018/calibrate-magnetometer/
-        avg_hi_offset = (self._x_hi_offset + self._y_hi_offset + self._z_hi_offset) / 3
-        self._x_si_offset = avg_hi_offset / self._x_hi_offset
-        self._y_si_offset = avg_hi_offset / self._y_hi_offset
-        self._z_si_offset = avg_hi_offset / self._z_hi_offset
-
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(_MMC5983MA_ADDR, _MMC5983MA_XOUT0, self.buffer)
 
@@ -164,7 +120,7 @@ class MMC5983MA:
         x_raw = reading[0] << 10 | reading[1] << 2 | reading[6] >> 6
         y_raw = reading[2] << 10 | reading[3] << 2 | ((reading[6] >> 4) & 0x03)
         z_raw = reading[4] << 10 | reading[5] << 2 | ((reading[6] >> 2) & 0x03)
-        x_adj = (x_raw - self._x_offset - self._x_hi_offset) * self._x_si_offset
-        y_adj = (y_raw - self._y_offset - self._y_hi_offset) * self._y_si_offset
-        z_adj = (z_raw - self._z_offset - self._z_hi_offset) * self._z_si_offset
+        x_adj = (x_raw - self._x_offset - _X_HI_OFFSET) * _X_SI_OFFSET
+        y_adj = (y_raw - self._y_offset - _Y_HI_OFFSET) * _Y_SI_OFFSET
+        z_adj = (z_raw - self._z_offset - _Z_HI_OFFSET) * _Z_SI_OFFSET
         return (x_adj, y_adj, z_adj)

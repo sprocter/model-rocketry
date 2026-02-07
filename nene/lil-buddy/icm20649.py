@@ -40,12 +40,12 @@ _EXPECTED_DEVICE_ID = const(0xE1)  # pg 38, 8.1.1
 _GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
 _ACCEL_SENSITIVITY = const(1024)  # pg 13, 3.2
 
-_ACC_X_ERR = const(0.066233136)
-_ACC_Y_ERR = const(0.014786578)
-_ACC_Z_ERR = const(0.24895954)
-_GYRO_X_ERR = const(-0.5673175)
-_GYRO_Y_ERR = const(1.5107302)
-_GYRO_Z_ERR = const(-0.358049)
+_ACC_X_ERR = const(0.10822296)
+_ACC_Y_ERR = const(-0.21025884)
+_ACC_Z_ERR = const(0.58796824)
+_GYRO_X_ERR = const(-0.58353684)
+_GYRO_Y_ERR = const(1.4780478)
+_GYRO_Z_ERR = const(-0.4469513)
 
 
 _ACCEL_ADJUST = const(G_TO_MS2 / _ACCEL_SENSITIVITY)
@@ -92,18 +92,18 @@ class ICM20649:
         # 00 10 0000
         self.i2c.writeto_mem(ICM20649_ADDR, _REG_BANK_SEL, b"\x20")
 
-        # Sample rate = 1.1kHz/(1+ X), X = 21, ODR = 50Hz
-        # 00010101
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_GYRO_SMPLRT_DIV, b"\x15")
+        # Sample rate = 1.1kHz/(1+ X), X = 24, ODR = 45.8333Hz
+        # 00011000
+        self.i2c.writeto_mem(ICM20649_ADDR, _REG_GYRO_SMPLRT_DIV, b"\x18")
 
         # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
         # Gyroscope is in full scale, enable gyro DLPF
         # 00 011 11 1
         self.i2c.writeto_mem(ICM20649_ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
 
-        # Sample rate = 1.1kHz/(1+X), X = 21, ODR = 50Hz
-        # 00010101
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_ACCEL_SMPLRT_DIV_2, b"\x15")
+        # Sample rate = 1.1kHz/(1+X), X = 24, ODR = 45.8333Hz
+        # 00011000
+        self.i2c.writeto_mem(ICM20649_ADDR, _REG_ACCEL_SMPLRT_DIV_2, b"\x18")
 
         # Bits 7 and 6 are reserved, accel DLPF is set to 3 (? I don't get this)
         # Accelerometer is in full scale, enable accel DLPF

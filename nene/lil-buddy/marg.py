@@ -17,7 +17,11 @@ from ulab import numpy as np
 from fusion import Fusion
 from orientate import orientate
 
+
 class StateEstimator:
+
+    # Roll, pitch, and yaw are oriented according to this layout: 
+    # https://www1.grc.nasa.gov/wp-content/uploads/rotations.gif
 
     def __init__(self, period: float, accel_err: float, alti_err: float):
         """Initialize the estimator
@@ -47,19 +51,23 @@ class StateEstimator:
 
     @property
     def heading(self) -> float:
-        h = self.fuse.heading + 9.283
-        if h < 0:
-            return 360+h
-        else:
-            return h
+        # Roll for a rocket (which primarily travels vertically) is akin to 
+        # heading for a plane (which primarily travels horizontally)
+        return -1 * self.fuse.roll
 
     @property
     def pitch(self) -> float:
-        return -1*self.fuse.pitch
+        return self.fuse.pitch
 
     @property
     def roll(self) -> float:
-        return self.fuse.roll
+        # heading for a rocket (which primarily travels vertically) is akin to 
+        # roll for a plane (which primarily travels horizontally)
+        h = self.fuse.heading + 9.283
+        if h < 0:
+            return 360 + h
+        else:
+            return h
 
     @property
     def acceleration(self) -> float:
@@ -68,21 +76,22 @@ class StateEstimator:
     @property
     def gyroscope(self) -> float:
         return self._gyro  # Just returns the cached sensor reading
-    
+
     @property
     def magnetometer(self) -> float:
         return self._magnetometer  # Just returns the cached sensor reading
 
     @altitude.setter
     def altitude(self, value) -> None:
-        self.KF.predict(self.acceleration[1]) # TODO: Should we use more than the Y value? Adjust for pitch?
+        self.KF.predict(
+            self.acceleration[0]
+        )  # TODO: Should we use more than the X value? Adjust for pitch?
         self.KF.update(value)
-        # TODO: This should be "orientated" once the mounting / payload position is known / established
         self.fuse.update(
-            self.acceleration, 
+            orientate((2, 1, 0), (False, False, False), self.acceleration)[0],
             # The fusion module seems to want the Z axis to spin the other way
-            orientate((0,1,2), (False, False, True), self.gyroscope)[0],
-            self.magnetometer
+            orientate((2, 1, 0), (True, True, False), self.gyroscope)[0],
+            orientate((2, 1, 0), (False, False, False), self.magnetometer)[0],
         )
 
     @acceleration.setter
@@ -96,7 +105,6 @@ class StateEstimator:
     @magnetometer.setter
     def magnetometer(self, value) -> None:
         self._magnetometer = value
-
 
 
 class KalmanFilter:

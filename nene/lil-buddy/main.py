@@ -85,7 +85,7 @@ _GPS_CONNECTED = False
 # This gives us over half an hour of data storing 20 values per reading, 50
 # times a second -- we cannot save that much to flash, so it's kind of moot.
 # TODO: Reduce this?
-_BUFFER_SIZE = const(2000000)
+_BUFFER_SIZE = const(2_000_000)
 
 ####################################
 # BEGIN Interrupt Service Routines #
@@ -103,32 +103,27 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
-    ts = [0] * 6
-    ts[0] = time.ticks_us()
+    global previous_gps_read_ts
+
+    timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
-    ts[1] = time.ticks_us()
     accel.read_raw()
-    ts[2] = time.ticks_us()
     mag.read_raw()
-    ts[3] = time.ticks_us()
-    if gps_reading_count % 5 == 0:
+
+    if timestamp - previous_gps_read_ts > 100:
+        previous_gps_read_ts = timestamp
         gps.read_raw()
 
-    ts[4] = time.ticks_us()
     schedule(
         process_reading,
         (
-            time.ticks_diff(time.ticks_ms(), launch_time_ms).to_bytes(3, "little"),
+            timestamp.to_bytes(3, "little"),
             alti.buffer,
             mag.buffer,
             accel.buffer,
             gps.buffer,
         ),
     )
-    ts[5] = time.ticks_us()
-    # print(
-    #         f"Total Duration of Reading: {time.ticks_diff(ts[5], ts[0])}μs"
-    #     )
 
 
 def send_radio_message(timer: Timer) -> None:
@@ -166,45 +161,36 @@ def enable_sensor_recording() -> None:
 def enable_radio() -> None:
     radio_timer.init(mode=Timer.PERIODIC, period=60000, callback=send_radio_message)
 
+
+@micropython.native
 def process_reading(
     reading: tuple[bytes, bytearray, bytearray, bytearray, tuple],
 ) -> None:
     global reading_num, gps_reading_count, recent_altis, apogee
 
-    ts = [0] * 14
-    ts[0] = time.ticks_us()
-
     timestamp = int.from_bytes(reading[0], "little")
-    # print(f"Timestamp: {timestamp}ms")
-    ts[1] = time.ticks_us()
     (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
     barometric_altitude = raw_altitude - initial_altitude
-    ts[2] = time.ticks_us()
     mag_rdg = mag.decode_mag(reading[2])
     estimator.magnetometer = mag_rdg
-    ts[3] = time.ticks_us()
     acc_rdg = accel.decode_accel(reading[3])
     estimator.acceleration = acc_rdg
-    ts[4] = time.ticks_us()
     gyro_rdg = gyro.decode_gyro(reading[3])
     estimator.gyroscope = gyro_rdg
-    ts[5] = time.ticks_us()
-    # gc.collect()
-    ts[6] = time.ticks_us()
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
     estimated_altitude = estimator.altitude  # Use the estimated altitude
-    ts[7] = time.ticks_us()
     if mode == _MODE_ASCENT and estimated_altitude > apogee:
         apogee = estimated_altitude
-    ts[8] = time.ticks_us()
     recent_altis.append(estimated_altitude)
-    ts[9] = time.ticks_us()
     # TODO re-enable this
     # update_mode()
-    ts[10] = time.ticks_us()
-    if gps_reading_count % 5 == 0:
-        gps.decode_reading(("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n", "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n"))
-    ts[11] = time.ticks_us()
+    if timestamp - previous_gps_read_ts > 100:
+        gps.decode_reading(
+            (
+                "$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n",
+                "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n",
+            )
+        )
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
             ">ffffffffffffffffffffff",
@@ -262,23 +248,12 @@ def process_reading(
         buff.store(idx_start + 21, estimator.velocity)
 
         reading_num += 1
-    ts[12] = time.ticks_us()
-    if gps_reading_count % 2 == 0 and gps_reading_count % 5 != 0:
+
+    # Garbage collect every third reading, unless we took a GPS reading this
+    # period, in which case skip this garbage collection entirely
+    if gps_reading_count % 3 == 0 and timestamp - previous_gps_read_ts <= 100:
         gc.collect()
-    ts[13] = time.ticks_us()
     gps_reading_count += 1
-
-    # if reading_num % 1 == 0:
-    #     print(f"\n==========================================================\n")
-    #     for i in range(len(ts) - 1):
-    #         print(f"Duration of {i} - {i + 1}: {time.ticks_diff(ts[i+1], ts[i])}μs")
-
-    #     # for i in range(20):
-    #     #     print(f"Value {buff.retrieve_from((reading_num-1)*20 + i)} retrieved from {(reading_num-1)*20 + i}")
-
-    #     print(
-    #         f"Total Duration of Decoding & Storing: {time.ticks_diff(ts[13], ts[0])}μs"
-    #     )
 
 
 def update_mode() -> None:
@@ -339,9 +314,9 @@ def _init_radio():
     mosi = 35
     miso = 37
     cs = 5
-    irq = 6 # "DIO1"
+    irq = 6  # "DIO1"
     rst = 44
-    gpio = 43 # "Busy"
+    gpio = 43  # "Busy"
 
     radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
 
@@ -350,7 +325,7 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = -5 # 22
+    tx_power = -5  # 22
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -399,14 +374,18 @@ def _init_devices() -> None:
 
     alti.initialize()
     mag.initialize()
-    # mag.calibrate()
     accel.initialize()
     gps.initialize()
 
     radio = _init_radio()
 
     # TODO: Re-do gps connection check and clock initialization now that we use GPS over UART and then remove this
-    gps.decode_reading(("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n", "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n"))
+    gps.decode_reading(
+        (
+            "$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n",
+            "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n",
+        )
+    )
 
     # if PA1010.I2C_ADDR in connected_devices:
     #     _GPS_CONNECTED = True
@@ -436,7 +415,7 @@ def _init_devices() -> None:
 
 
 def _init_board():
-    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, neopixel, previous_timestamp
+    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, neopixel
 
     # Clean up memory to reduce issues with fragmentation
     gc.collect()
@@ -467,7 +446,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts
 
     mode = _MODE_INITIALIZE
 
@@ -484,7 +463,7 @@ def initialize():
     estimator = StateEstimator(_PERIOD, alti.error, accel.error)
 
     gps_reading_count = 0
-    reading_num = 0 #_LAUNCHPAD_READINGS + 1
+    reading_num = 0  # _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_alti(alti.buffer)
     apogee = 0.0
@@ -494,6 +473,7 @@ def initialize():
 
     gc.collect()
     gps.clear_buffer()
+    previous_gps_read_ts = time.ticks_diff(time.ticks_ms(), init_time)
     enable_sensor_recording()
     gc.disable()
 
@@ -548,9 +528,7 @@ def _write_initial_data() -> None:
         unpacked = list(unpack(">ffffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
-    header_str = (
-        "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_heading, est_pitch, est_roll, est_alt, est_speed"
-    )
+    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed"
     # if _GPS_CONNECTED:
     #     header_str = str(launch_time_ymdwhms) + "\n" + header_str
     _write_data(list(adjusted_ground_readings), header_str)
@@ -569,13 +547,14 @@ def _write_data(
     if header_str is not None:
         print(header_str)
     for packed_reading in packed_readings:
-        print(", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading)))
-    reading = [0.0]*22
+        print(
+            ", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading))
+        )
+    reading = [0.0] * 22
     for i in range(reading_num):
         for j in range(22):
             reading[j] = buff.retrieve_from(i * 22 + j)
         print(", ".join(str(x) for x in reading))
-        
 
 
 def touchdown(timer: Timer) -> None:
@@ -615,7 +594,7 @@ def share_files() -> None:
 
 
 initialize()
-time.sleep(5)
+time.sleep(15)
 ascent()
 time.sleep(5)
 descent()

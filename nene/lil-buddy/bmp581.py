@@ -46,18 +46,18 @@ class BMP581:
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"BMP581 has incorrect device id {actual_device_id}")
 
-        # disable deep standby, ODR = 50.056hz, "normal" mode.
-        # 1 01111 01
-        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_ODR_CONFIG, b"\xBD")
+        # disable deep standby, ODR = 45.025hz, "normal" mode.
+        # 1 10000 01
+        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_ODR_CONFIG, b"\xC1")
         time.sleep_ms(10)
 
         # reserved, pressure iir = 2 / coeff 3, do not use temp iir filter
         # 00 010 000
         self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_DSP_IIR_CFG, b"\x10")
 
-        # Reserved, enable pressure readings, pressure osr = 16x, temp osr = 2x
-        # 0 1 100 001
-        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_OSR_CONFIG, b"\x61")
+        # Reserved, enable pressure readings, pressure osr = 32x, temp osr = 2x
+        # 0 1 101 001
+        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_OSR_CONFIG, b"\x69")
         time.sleep_ms(10)
 
     def read_raw(self) -> None:
