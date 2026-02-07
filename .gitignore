@@ -161,10 +161,10 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-accelerometer-altimeter/data/
-accelerometer-altimeter/sandboxes-and-tests/
-accelerometer-altimeter/.vscode/
-accelerometer-altimeter/secrets.json
-accelerometer-altimeter/typings/
+nene/data/
+nene/sandboxes-and-tests/
+nene/.vscode/
+nene/secrets.json
+nene/typings/
 
 **/.DS_Store
