@@ -41,7 +41,7 @@ _MODE_TOUCHDOWN = const(4)
 _MODE_FINISHED = const(5)
 _MODE_WIFI = const(6)
 
-_SENSOR_FREQ_HZ = const(50)
+_SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
 
 # Number of seconds to record before launch / after touchdown
@@ -94,21 +94,27 @@ _BUFFER_SIZE = const(2000000)
 
 def toggle_buzzer_freq(timer: Timer) -> None:
     global p1, p2
-    if p1.freq() == 5000:
-        p1.freq(2000)
-        p2.freq(2000)
+    if p1.freq() == 5198:
+        p1.freq(1800)
+        p2.freq(1800)
     else:
-        p1.freq(5000)
-        p2.freq(5000)
+        p1.freq(5200)
+        p2.freq(5200)
 
 
 def get_sensor_readings(timer: Timer) -> None:
+    ts = [0] * 6
+    ts[0] = time.ticks_us()
     alti.read_raw()
+    ts[1] = time.ticks_us()
     accel.read_raw()
+    ts[2] = time.ticks_us()
     mag.read_raw()
+    ts[3] = time.ticks_us()
     if gps_reading_count % 5 == 0:
         gps.read_raw()
 
+    ts[4] = time.ticks_us()
     schedule(
         process_reading,
         (
@@ -119,6 +125,10 @@ def get_sensor_readings(timer: Timer) -> None:
             gps.buffer,
         ),
     )
+    ts[5] = time.ticks_us()
+    # print(
+    #         f"Total Duration of Reading: {time.ticks_diff(ts[5], ts[0])}μs"
+    #     )
 
 
 def send_radio_message(timer: Timer) -> None:
@@ -143,8 +153,8 @@ def button_handler(boot_button: Pin) -> None:
 def enable_buzzer() -> None:
     global p1, p2
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
-    p1 = PWM(Pin(6), freq=5000, duty_u16=32768)
-    p2 = PWM(Pin(5), freq=5000, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
+    p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
 
 
 def enable_sensor_recording() -> None:
@@ -155,7 +165,6 @@ def enable_sensor_recording() -> None:
 
 def enable_radio() -> None:
     radio_timer.init(mode=Timer.PERIODIC, period=60000, callback=send_radio_message)
-
 
 def process_reading(
     reading: tuple[bytes, bytearray, bytearray, bytearray, tuple],
@@ -171,16 +180,16 @@ def process_reading(
     (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
     barometric_altitude = raw_altitude - initial_altitude
     ts[2] = time.ticks_us()
-    (mag_x, mag_y, mag_z) = mag.decode_reading(reading[2])
+    mag_rdg = mag.decode_mag(reading[2])
+    estimator.magnetometer = mag_rdg
     ts[3] = time.ticks_us()
-    (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, temp) = accel.decode_reading(
-        reading[3]
-    )
-    estimator.mag = [mag_x, mag_y, mag_z]
+    acc_rdg = accel.decode_accel(reading[3])
+    estimator.acceleration = acc_rdg
     ts[4] = time.ticks_us()
-    estimator.acceleration = [acc_x, acc_y, acc_z]
+    gyro_rdg = gyro.decode_gyro(reading[3])
+    estimator.gyroscope = gyro_rdg
     ts[5] = time.ticks_us()
-    estimator.gyro = [gyro_x, gyro_y, gyro_z]
+    # gc.collect()
     ts[6] = time.ticks_us()
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
     estimated_altitude = estimator.altitude  # Use the estimated altitude
@@ -193,27 +202,22 @@ def process_reading(
     # TODO re-enable this
     # update_mode()
     ts[10] = time.ticks_us()
-    if gps_reading_count % 5 == 1:
-        # Note that we decode the GPS reading when gps_reading_count % 5 == 1, 
-        # but we take the reading when gps_reading_count % 5 == 0. We do this 
-        # to split reading time (~1ms) and computation time (~1.2ms) across two 
-        # periods, but it means that our GPS readings have even higher latency
-        # gps.decode_reading(reading[4])
+    if gps_reading_count % 5 == 0:
         gps.decode_reading(("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n", "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n"))
     ts[11] = time.ticks_us()
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
             ">ffffffffffffffffffffff",
             float(timestamp),
-            acc_x,
-            acc_y,
-            acc_z,
-            gyro_x,
-            gyro_y,
-            gyro_z,
-            mag_x,
-            mag_y,
-            mag_z,
+            acc_rdg[0],
+            acc_rdg[1],
+            acc_rdg[2],
+            gyro_rdg[0],
+            gyro_rdg[1],
+            gyro_rdg[2],
+            mag_rdg[0],
+            mag_rdg[1],
+            mag_rdg[2],
             barometric_altitude,
             gps.altitude,
             ambient_temp,
@@ -231,15 +235,15 @@ def process_reading(
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         idx_start = reading_num * 22
         buff.store(idx_start + 0, float(timestamp))
-        buff.store(idx_start + 1, acc_x)
-        buff.store(idx_start + 2, acc_y)
-        buff.store(idx_start + 3, acc_z)
-        buff.store(idx_start + 4, gyro_x)
-        buff.store(idx_start + 5, gyro_y)
-        buff.store(idx_start + 6, gyro_z)
-        buff.store(idx_start + 7, mag_x)
-        buff.store(idx_start + 8, mag_y)
-        buff.store(idx_start + 9, mag_z)
+        buff.store(idx_start + 1, acc_rdg[0])
+        buff.store(idx_start + 2, acc_rdg[1])
+        buff.store(idx_start + 3, acc_rdg[2])
+        buff.store(idx_start + 4, gyro_rdg[0])
+        buff.store(idx_start + 5, gyro_rdg[1])
+        buff.store(idx_start + 6, gyro_rdg[2])
+        buff.store(idx_start + 7, mag_rdg[0])
+        buff.store(idx_start + 8, mag_rdg[1])
+        buff.store(idx_start + 9, mag_rdg[2])
         buff.store(idx_start + 10, barometric_altitude)
         buff.store(idx_start + 11, gps.altitude)
         buff.store(idx_start + 12, ambient_temp)
@@ -259,7 +263,8 @@ def process_reading(
 
         reading_num += 1
     ts[12] = time.ticks_us()
-    gc.collect()
+    if gps_reading_count % 2 == 0 and gps_reading_count % 5 != 0:
+        gc.collect()
     ts[13] = time.ticks_us()
     gps_reading_count += 1
 
@@ -268,11 +273,11 @@ def process_reading(
     #     for i in range(len(ts) - 1):
     #         print(f"Duration of {i} - {i + 1}: {time.ticks_diff(ts[i+1], ts[i])}μs")
 
-    #     for i in range(20):
-    #         print(f"Value {buff.retrieve_from((reading_num-1)*20 + i)} retrieved from {(reading_num-1)*20 + i}")
+    #     # for i in range(20):
+    #     #     print(f"Value {buff.retrieve_from((reading_num-1)*20 + i)} retrieved from {(reading_num-1)*20 + i}")
 
     #     print(
-    #         f"Total Duration of Reading {reading_num}: {time.ticks_diff(ts[13], ts[0])}μs"
+    #         f"Total Duration of Decoding & Storing: {time.ticks_diff(ts[13], ts[0])}μs"
     #     )
 
 
@@ -328,14 +333,24 @@ def _update_neopixel() -> None:
 
 def _init_radio():
     global msg_header, msg_id
-    radio = SX1262(1, 36, 35, 37, 8, 18, 9, 17)
+
+    spi_bus = 1
+    clk = 36
+    mosi = 35
+    miso = 37
+    cs = 5
+    irq = 6 # "DIO1"
+    rst = 44
+    gpio = 43 # "Busy"
+
+    radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
 
     frequency = 917.0
     bandwidth = 125
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = 22  # -5 # 22
+    tx_power = -5 # 22
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -388,7 +403,7 @@ def _init_devices() -> None:
     accel.initialize()
     gps.initialize()
 
-    # radio = _init_radio()
+    radio = _init_radio()
 
     # TODO: Re-do gps connection check and clock initialization now that we use GPS over UART and then remove this
     gps.decode_reading(("$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n", "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n"))
@@ -480,6 +495,7 @@ def initialize():
     gc.collect()
     gps.clear_buffer()
     enable_sensor_recording()
+    gc.disable()
 
     mode = _MODE_LAUNCHPAD
     _update_neopixel()
@@ -521,7 +537,7 @@ def descent() -> None:
     global mode
     mode = _MODE_DESCENT
     _update_neopixel()
-    enable_buzzer()
+    # enable_buzzer()
 
 
 def _write_initial_data() -> None:
@@ -565,10 +581,11 @@ def _write_data(
 def touchdown(timer: Timer) -> None:
     global mode
     sensor_reading_timer.deinit()
+
     # enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
     # TODO: Add shutoff to sensors?
     gc.collect()
-
+    gc.enable()
     _write_initial_data()
 
     mode = _MODE_FINISHED
