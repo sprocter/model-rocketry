@@ -11,7 +11,7 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-from machine import PWM, Pin, I2C, Timer
+from machine import PWM, Pin, I2C, Timer, RTC
 from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque
@@ -112,7 +112,8 @@ def get_sensor_readings(timer: Timer) -> None:
 
     if timestamp - previous_gps_read_ts > 100:
         previous_gps_read_ts = timestamp
-        gps.read_raw()
+        if _GPS_CONNECTED:
+            gps.read_raw()
 
     schedule(
         process_reading,
@@ -184,13 +185,8 @@ def process_reading(
     recent_altis.append(estimated_altitude)
     # TODO re-enable this
     # update_mode()
-    if timestamp - previous_gps_read_ts > 100:
-        gps.decode_reading(
-            (
-                "$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n",
-                "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n",
-            )
-        )
+    if _GPS_CONNECTED and timestamp - previous_gps_read_ts > 100:
+        gps.decode_reading(gps.buffer)
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
             ">ffffffffffffffffffffff",
@@ -379,36 +375,6 @@ def _init_devices() -> None:
 
     radio = _init_radio()
 
-    # TODO: Re-do gps connection check and clock initialization now that we use GPS over UART and then remove this
-    gps.decode_reading(
-        (
-            "$GNRMC,155503.000,A,5606.1725,N,01404.0622,E,0.04,0.00,110918,,,D*75\n",
-            "$GNGGA,165006.000,2241.9107,N,12017.2383,E,1,14,0.79,22.6,M,18.5,M,,*42\n",
-        )
-    )
-
-    # if PA1010.I2C_ADDR in connected_devices:
-    #     _GPS_CONNECTED = True
-    #     # TODO: Move clock initialization to the board initializer?
-    #     clock = RTC()
-    #     gps = PA1010(i2c)
-    #     gps.set_update_rate(1)
-    #     while not gps.update():
-    #         time.sleep(5)
-    #     gps.update()  # We have a fix but it could be up to 5s outdated
-    #     clock.init(
-    #         (
-    #             gps.year,
-    #             gps.month,
-    #             gps.day,
-    #             gps.hour,
-    #             gps.minute,
-    #             gps.second,
-    #             0,  # microsecond, ignored
-    #             0,  # tzinfo, ignored
-    #         )
-    #     )
-
     # Even though the battery monitor is on the board, it communicates via I2C
     # so we initialize it here, rather than _init_board
     batt_monitor = MAX17048(i2c)
@@ -446,7 +412,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, _GPS_CONNECTED
 
     mode = _MODE_INITIALIZE
 
@@ -470,6 +436,28 @@ def initialize():
 
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
+
+    gps.clear_buffer()
+    time.sleep_ms(100)
+    gps.read_raw()
+    gps.decode_reading(gps.buffer)
+    if hasattr(gps, 'valid') and gps.valid == True:
+        _GPS_CONNECTED = True
+        clock = RTC()
+        clock.init(
+            (
+                gps.year,
+                gps.month,
+                gps.day,
+                gps.hour,
+                gps.minute,
+                gps.second,
+                0,  # microsecond, ignored
+                0,  # tzinfo, ignored
+            )
+        )
+    else:
+        _GPS_CONNECTED = False
 
     gc.collect()
     gps.clear_buffer()
@@ -529,8 +517,15 @@ def _write_initial_data() -> None:
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
     header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed"
-    # if _GPS_CONNECTED:
-    #     header_str = str(launch_time_ymdwhms) + "\n" + header_str
+    if _GPS_CONNECTED:
+        year = launch_time_ymdwhms[0]
+        month = launch_time_ymdwhms[1]
+        day = launch_time_ymdwhms[2]
+        weekday = launch_time_ymdwhms[3]
+        hours = launch_time_ymdwhms[4]
+        minutes = launch_time_ymdwhms[5]
+        seconds = launch_time_ymdwhms[6]
+        header_str = f"Liftoff at {hours}:{minutes}:{seconds} on {weekday}, {month} {day}, {year} \n {header_str}"
     _write_data(list(adjusted_ground_readings), header_str)
 
 
@@ -561,7 +556,7 @@ def touchdown(timer: Timer) -> None:
     global mode
     sensor_reading_timer.deinit()
 
-    # enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
+    enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
     # TODO: Add shutoff to sensors?
     gc.collect()
     gc.enable()

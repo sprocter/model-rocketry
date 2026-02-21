@@ -39,6 +39,14 @@ class PA1010:
         self.tx = uart_tx
         self.rx = uart_rx
         self.buffer = (b'', b'')
+
+        # Set placeholder values to avoid attr checks in speed-critical code
+        self.altitude = 0.0 
+        self.heading = 0.0
+        self.speed = 0.0
+        self.lat = 0.0
+        self.lon = 0.0
+        
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
     def initialize(self):
@@ -107,7 +115,7 @@ class PA1010:
         self.minute = int(m.group(2))
         self.second = int(m.group(3))
         self.milli = int(m.group(4))
-        self.valid = m.group(5) == "A"
+        self.valid = m.group(5) == b'A'
         # self.lat, self.latNS, self.lon, self.lonEW = m.groups()[5:9]
         self.lat = m.group(6)
         self.latNS = m.group(7)
