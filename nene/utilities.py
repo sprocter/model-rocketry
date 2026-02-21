@@ -191,4 +191,4 @@ def get_alti():
     print(alti.decode_reading(alti.buffer))
 
 
-print_icm20649_offsets()
+print_filesystem_space()

@@ -166,5 +166,6 @@ nene/sandboxes-and-tests/
 nene/.vscode/
 nene/secrets.json
 nene/typings/
+nene/lil-buddy/py-modules/
 
 **/.DS_Store

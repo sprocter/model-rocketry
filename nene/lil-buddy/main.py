@@ -282,7 +282,10 @@ def send_message(arg=None) -> None:
     if hdr_flags == 0:
         payload = pack(">d", apogee - initial_altitude)
     elif hdr_flags == 1:
-        gps.update()
+        gps.clear_buffer()
+        time.sleep_ms(200)
+        gps.read_raw()
+        gps.decode_reading(gps.buffer)
         lat_str = gps.lat
         lat_dir = ord(gps.latNS)
         lon_str = gps.lon
@@ -438,7 +441,7 @@ def initialize():
     recent_altis = deque([], _RECENT_READINGS)
 
     gps.clear_buffer()
-    time.sleep_ms(100)
+    time.sleep_ms(200)
     gps.read_raw()
     gps.decode_reading(gps.buffer)
     if hasattr(gps, 'valid') and gps.valid == True:
@@ -596,5 +599,5 @@ time.sleep(5)
 mode = _MODE_TOUCHDOWN
 _update_neopixel()
 touchdown(None)
-# while True:
-#     time.sleep(5)
+while True:
+    time.sleep(5)

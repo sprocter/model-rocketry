@@ -163,8 +163,8 @@ button_A.irq(trigger=Pin.IRQ_FALLING, handler=handleA)
 button_B.irq(trigger=Pin.IRQ_FALLING, handler=handleB)
 button_C.irq(trigger=Pin.IRQ_FALLING, handler=handleC)
 
-lat_str = "X -- --.----"
-lon_str = "Y--- --.----"
+lat_str = "  -- --.----"
+lon_str = " --- --.----"
 alt_str = "----.--"
 
 while True:
