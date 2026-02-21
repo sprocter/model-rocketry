@@ -82,7 +82,7 @@ _MODE_TO_LED = {
 _GPS_CONNECTED = False
 
 # 2M Floats is 8MiB, which is how much PSRAM we have.
-# This gives us over half an hour of data storing 20 values per reading, 50
+# This gives us over half an hour of data storing 22 values per reading, 45
 # times a second -- we cannot save that much to flash, so it's kind of moot.
 # TODO: Reduce this?
 _BUFFER_SIZE = const(2_000_000)
@@ -412,7 +412,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, _GPS_CONNECTED
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED
 
     mode = _MODE_INITIALIZE
 
@@ -521,11 +521,10 @@ def _write_initial_data() -> None:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
         day = launch_time_ymdwhms[2]
-        weekday = launch_time_ymdwhms[3]
-        hours = launch_time_ymdwhms[4]
-        minutes = launch_time_ymdwhms[5]
-        seconds = launch_time_ymdwhms[6]
-        header_str = f"Liftoff at {hours}:{minutes}:{seconds} on {weekday}, {month} {day}, {year} \n {header_str}"
+        hour = launch_time_ymdwhms[4]
+        minute = launch_time_ymdwhms[5]
+        second = launch_time_ymdwhms[6]
+        header_str = f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z \n {header_str}"
     _write_data(list(adjusted_ground_readings), header_str)
 
 
