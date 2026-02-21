@@ -6,7 +6,7 @@ This module for MicroPython will allow the user to declare a buffer of floats of
 Its purpose is to enable the use of memory (e.g., SPIRAM / PSRAM) without slowing down the MicroPython garbage collector as would happen if you just declared a similarly-sized array/bytearray. Like all buffers in MicroPython, you should declare (initialize) it early in the program to avoid issues with fragmentation blocking the initialization.
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -20,14 +20,18 @@ You should have received a copy of the GNU General Public License along with thi
 
 static float *buffer;
 static bool initialized = false;
+static int size = 0;
 
 // Store the given value at the given index
 static mp_obj_t store(mp_obj_t idx_obj, mp_obj_t value_obj) {
     if(initialized){
-        // TODO: Add bounds checking (0 <= idx < size)
         int idx = mp_obj_get_int(idx_obj);
-        float value = mp_obj_get_float(value_obj);
-        buffer[idx] = value;
+        if(0 <= idx && idx < size) {
+            float value = mp_obj_get_float(value_obj);
+            buffer[idx] = value;
+        } else {
+            return mp_const_none;
+        }
     }
     return mp_const_none;
 }
@@ -35,10 +39,13 @@ static mp_obj_t store(mp_obj_t idx_obj, mp_obj_t value_obj) {
 // Retrieve the float from the given index
 static mp_obj_t retrieve_from(mp_obj_t idx_obj) {
     if(initialized){
-        // TODO: Add bounds checking (0 <= idx < size)
         int idx = mp_obj_get_int(idx_obj);
-        float ret_val = buffer[idx];
-        return mp_obj_new_float(ret_val);
+        if(0 <= idx && idx < size) {
+            float ret_val = buffer[idx];
+            return mp_obj_new_float(ret_val);
+        } else {
+            return mp_const_none;
+        }
     } else {
         return mp_const_none;
     }
@@ -47,8 +54,7 @@ static mp_obj_t retrieve_from(mp_obj_t idx_obj) {
 // Initialize the buffer
 static mp_obj_t init_buffer(mp_obj_t size_obj) {
     if(!initialized){
-        // TODO: Make size a global
-        int size = mp_obj_get_int(size_obj);
+        size = mp_obj_get_int(size_obj);
         buffer = malloc(size * sizeof(float));
         initialized = true;
     }
