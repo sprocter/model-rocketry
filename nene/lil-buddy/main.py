@@ -283,15 +283,15 @@ def send_message(arg=None) -> None:
         payload = pack(">d", apogee - initial_altitude)
     elif hdr_flags == 1:
         gps.clear_buffer()
-        time.sleep_ms(200)
+        time.sleep_ms(500)
         gps.read_raw()
         gps.decode_reading(gps.buffer)
         lat_str = gps.lat
         lat_dir = ord(gps.latNS)
         lon_str = gps.lon
         lon_dir = ord(gps.lonEW)
-        lat_elems = [int(x) for x in lat_str.split(".")]
-        lon_elems = [int(x) for x in lon_str.split(".")]
+        lat_elems = [int(x) for x in lat_str.split(b".")]
+        lon_elems = [int(x) for x in lon_str.split(b".")]
         payload_elems = lat_elems + [lat_dir] + lon_elems + [lon_dir]
         payload = pack(">HHBHHB", *payload_elems)
 
