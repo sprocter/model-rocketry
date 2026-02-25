@@ -28,7 +28,7 @@ from pa1010 import PA1010
 from sx1262 import SX1262
 from marg import StateEstimator
 
-import time, gc, json, vfs, machine, network, uftpd
+import time, gc, json, vfs, machine, network, uftpd, os, deflate
 import adxl375, icm20649
 import hidden_buffer as buff
 
@@ -439,7 +439,8 @@ def _init_board():
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
     button_pressed = False
 
-    # TODO: Since we don't do any reading or writing in-flight, move this to touchdown?
+    # Mount the filesystem so we can read the config json file and 
+    # (after touchdown) write the recorded data to flash
     vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
 
 
@@ -521,7 +522,7 @@ def descent() -> None:
     # enable_buzzer()
 
 
-def _write_initial_data() -> None:
+def _write_data() -> None:
     time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
@@ -538,30 +539,40 @@ def _write_initial_data() -> None:
         minute = launch_time_ymdwhms[5]
         second = launch_time_ymdwhms[6]
         header_str = f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z \n {header_str}"
-    _write_data(list(adjusted_ground_readings), header_str)
 
+    # Expect filenames of the form 'launch-XXXX.csv'
+    prev_launches = sorted(list(filter(lambda y: y.startswith('launch-') and y.endswith('.csv.gz'), os.listdir())))
+    if len(prev_launches) == 0:
+        launch_num = 1
+    else:
+        launch_num = int(prev_launches[-1][-11:-7]) + 1
 
-def _write_data(
-    packed_readings: list[bytearray], header_str: Optional[str] = None
-) -> None:
-    # with open(f"launch-{launch_num}.csv", "at") as f:
-    #     if header_str is not None:
-    #         f.write(header_str)
-    #     for packed_reading in packed_readings:
-    #         f.write(
-    #             ", ".join(str(x) for x in unpack(">iffffffff", packed_reading)) + "\n"
-    #         )
-    if header_str is not None:
-        print(header_str)
-    for packed_reading in packed_readings:
-        print(
-            ", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading))
-        )
-    reading = [0.0] * 22
-    for i in range(reading_num):
-        for j in range(22):
-            reading[j] = buff.retrieve_from(i * 22 + j)
-        print(", ".join(str(x) for x in reading))
+    # TODO: see if https://github.com/jonnor/micropython-zipfile will work??
+
+    with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
+        with deflate.DeflateIO(f, deflate.ZLIB) as d:
+            d.write(header_str.encode('UTF-8'))
+            for packed_reading in adjusted_ground_readings:
+                d.write(
+                    (", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading)) + "\n").encode('UTF-8')
+                )
+            reading = [0.0] * 22
+            for i in range(reading_num):
+                for j in range(22):
+                    reading[j] = buff.retrieve_from(i * 22 + j)
+                d.write((", ".join(str(x) for x in reading)+"\n").encode('UTF-8'))
+
+    # if header_str is not None:
+    #     print(header_str)
+    # for packed_reading in adjusted_ground_readings:
+    #     print(
+    #         ", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading))
+    #     )
+    # reading = [0.0] * 22
+    # for i in range(reading_num):
+    #     for j in range(22):
+    #         reading[j] = buff.retrieve_from(i * 22 + j)
+    #     print(", ".join(str(x) for x in reading))
 
 
 def touchdown(timer: Timer) -> None:
@@ -569,10 +580,9 @@ def touchdown(timer: Timer) -> None:
     sensor_reading_timer.deinit()
 
     enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
-    # TODO: Add shutoff to sensors?
     gc.collect()
     gc.enable()
-    _write_initial_data()
+    _write_data()
 
     mode = _MODE_FINISHED
     _update_neopixel()
@@ -609,5 +619,6 @@ time.sleep(5)
 mode = _MODE_TOUCHDOWN
 _update_neopixel()
 touchdown(None)
+print("Done!")
 while True:
     time.sleep(5)
