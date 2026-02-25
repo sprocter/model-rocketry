@@ -183,8 +183,7 @@ def process_reading(
     if mode == _MODE_ASCENT and estimated_altitude > apogee:
         apogee = estimated_altitude
     recent_altis.append(estimated_altitude)
-    # TODO re-enable this
-    # update_mode()
+    update_mode()
     if _GPS_CONNECTED and timestamp - previous_gps_read_ts > 100:
         gps.decode_reading(gps.buffer)
     if mode == _MODE_LAUNCHPAD:
@@ -254,18 +253,40 @@ def process_reading(
 
 def update_mode() -> None:
     global mode
-    if mode == _MODE_LAUNCHPAD and have_liftoff(recent_altis):
+    if mode == _MODE_LAUNCHPAD and have_liftoff():
         ascent()
-    elif (mode == _MODE_ASCENT or mode == _MODE_LAUNCHPAD) and started_descent(
-        recent_altis, apogee
-    ):
-        # We can go straight to descent from launchpad mode because mid-air reboots happen, unfortunately. We don't want to lose data.
+    elif mode == _MODE_ASCENT and started_descent():
         descent()
-    elif mode == _MODE_DESCENT and touched_down(recent_altis, apogee):
+    elif mode == _MODE_DESCENT and touched_down():
         mode = _MODE_TOUCHDOWN
         _update_neopixel()
         # Wait a final few seconds then remove timer and turn off sensors
         touchdown_timer.init(mode=Timer.ONE_SHOT, period=3000, callback=touchdown)
+
+
+@micropython.native
+def have_liftoff() -> bool:
+    threshold = _ALTITUDE_DIFFERENCE
+    return sum(i > threshold for i in recent_altis) > _CONFIRMATORY_READINGS
+
+
+@micropython.native
+def started_descent() -> bool:
+    threshold = apogee - _ALTITUDE_DIFFERENCE
+    return sum(i < threshold for i in recent_altis) > _CONFIRMATORY_READINGS
+
+
+@micropython.native
+def touched_down() -> bool:
+    if apogee < _ALTITUDE_DIFFERENCE:
+        return False  # If we haven't gone up at least _A_D
+    if max(recent_altis) > (apogee - _ALTITUDE_DIFFERENCE):
+        return False  # If we haven't fallen at least _A_D from apogee
+    n = len(recent_altis)
+    u = sum(recent_altis) / n
+    u2 = u**2
+    variance = (1 / n) * sum([x**2 - 2 * u * x + u2 for x in recent_altis])
+    return abs(variance) < 0.001
 
 
 def send_message(arg=None) -> None:
@@ -283,17 +304,25 @@ def send_message(arg=None) -> None:
         payload = pack(">d", apogee - initial_altitude)
     elif hdr_flags == 1:
         gps.clear_buffer()
-        time.sleep_ms(500)
+        time.sleep_ms(100)
         gps.read_raw()
-        gps.decode_reading(gps.buffer)
-        lat_str = gps.lat
-        lat_dir = ord(gps.latNS)
-        lon_str = gps.lon
-        lon_dir = ord(gps.lonEW)
-        lat_elems = [int(x) for x in lat_str.split(b".")]
-        lon_elems = [int(x) for x in lon_str.split(b".")]
-        payload_elems = lat_elems + [lat_dir] + lon_elems + [lon_dir]
-        payload = pack(">HHBHHB", *payload_elems)
+        retries = 0  # Avoid hanging if something went wrong with the GPS
+        while retries < 30 and gps.buffer[0] == None and gps.buffer[1] == None:
+            time.sleep_ms(100)
+            gps.read_raw()
+            retries += 1
+
+        if retries >= 30 or not gps.valid:
+            payload = pack(">HHBHHB", 0, 0, 0, 0, 0, 0)
+        else:
+            lat_str = gps.lat
+            lat_dir = ord(gps.latNS)
+            lon_str = gps.lon
+            lon_dir = ord(gps.lonEW)
+            lat_elems = [int(x) for x in lat_str.split(b".")]
+            lon_elems = [int(x) for x in lon_str.split(b".")]
+            payload_elems = lat_elems + [lat_dir] + lon_elems + [lon_dir]
+            payload = pack(">HHBHHB", *payload_elems)
 
     radio.send(msg_header + payload)
 
@@ -441,10 +470,13 @@ def initialize():
     recent_altis = deque([], _RECENT_READINGS)
 
     gps.clear_buffer()
-    time.sleep_ms(200)
+    time.sleep_ms(100)
     gps.read_raw()
+    while gps.buffer[0] == None and gps.buffer[1] == None:
+        time.sleep_ms(100)
+        gps.read_raw()
     gps.decode_reading(gps.buffer)
-    if hasattr(gps, 'valid') and gps.valid == True:
+    if hasattr(gps, "valid") and gps.valid == True:
         _GPS_CONNECTED = True
         clock = RTC()
         clock.init(
@@ -470,28 +502,6 @@ def initialize():
 
     mode = _MODE_LAUNCHPAD
     _update_neopixel()
-
-
-def have_liftoff(recent_altis: deque) -> bool:
-    threshold = _ALTITUDE_DIFFERENCE
-    return sum(i > threshold for i in recent_altis) > _CONFIRMATORY_READINGS
-
-
-def started_descent(recent_altis: deque, apogee: float) -> bool:
-    threshold = apogee - _ALTITUDE_DIFFERENCE
-    return sum(i < threshold for i in recent_altis) > _CONFIRMATORY_READINGS
-
-
-def touched_down(recent_altis: deque, apogee: float) -> bool:
-    if apogee < _ALTITUDE_DIFFERENCE:
-        return False  # If we haven't gone up at least _A_D
-    if max(recent_altis) > (apogee - _ALTITUDE_DIFFERENCE):
-        return False  # If we haven't fallen at least _A_D from apogee
-    n = len(recent_altis)
-    u = sum(recent_altis) / n
-    u2 = u**2
-    variance = (1 / n) * sum([x**2 - 2 * u * x + u2 for x in recent_altis])
-    return abs(variance) < 0.001
 
 
 def ascent() -> None:
