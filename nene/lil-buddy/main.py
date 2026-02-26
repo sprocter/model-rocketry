@@ -478,6 +478,7 @@ def initialize():
         gps.read_raw()
     gps.decode_reading(gps.buffer)
     if hasattr(gps, "valid") and gps.valid == True:
+        # TODO: Change the LED so we know we have a GPS fix
         _GPS_CONNECTED = True
         clock = RTC()
         clock.init(
@@ -547,10 +548,9 @@ def _write_data() -> None:
     else:
         launch_num = int(prev_launches[-1][-11:-7]) + 1
 
-    # TODO: see if https://github.com/jonnor/micropython-zipfile will work??
-
     with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
-        with deflate.DeflateIO(f, deflate.ZLIB) as d:
+        # TODO: Crank the window size a little higher? 10 maybe?
+        with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
             d.write(header_str.encode('UTF-8'))
             for packed_reading in adjusted_ground_readings:
                 d.write(
@@ -579,6 +579,7 @@ def touchdown(timer: Timer) -> None:
     global mode
     sensor_reading_timer.deinit()
 
+    # TODO: Send a message (with GPS coords) immediately, since we're on the ground?
     enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
     gc.collect()
     gc.enable()
