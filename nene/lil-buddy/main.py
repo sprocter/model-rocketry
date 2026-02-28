@@ -307,16 +307,31 @@ def send_message(arg=None) -> None:
     if hdr_flags == 0:
         payload = pack(">d", apogee)
     elif hdr_flags == 1:
-        gps.clear_buffer()
-        time.sleep_ms(100)
-        gps.read_raw()
         retries = 0  # Avoid hanging if something went wrong with the GPS
-        while retries < 30 and gps.buffer[0] == None and gps.buffer[1] == None:
+
+        while retries < 30 and (
+            gps.buffer[0] == None
+            or gps.buffer[1] == None
+            or not hasattr(gps, "valid")
+            or gps.valid == False
+        ):
+            if npxl_on:
+                neopixel[0] = _NPXL_OFF
+                neopixel.write()
+                npxl_on = False
+            else:
+                neopixel[0] = _MODE_TO_LED[mode]
+                neopixel.write()
+                npxl_on = True
+
+            gps.clear_buffer()
             time.sleep_ms(100)
             gps.read_raw()
-            retries += 1
 
-        if retries >= 30 or not gps.valid:
+            if gps.buffer[0] != None and gps.buffer[1] != None:
+                gps.decode_reading(gps.buffer)
+
+        if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
             payload = pack(">HHBHHB", 0, 0, 0, 0, 0, 0)
         else:
             lat_str = gps.lat
@@ -619,12 +634,12 @@ def touchdown(timer: Timer) -> None:
     gc.enable()
     gc.collect()
 
+    _write_data() # Get the data safely written first
+
     # Note that we can't turn the radio on until the sensors are off because it takes so long (~400ms) to send a message
 
-    send_message()  # Send a message as soon as we hit the ground
+    send_message()  # Send a message as soon as we're done with file i/o
     enable_radio()  # Send future messages once per minute
-
-    _write_data()
 
     mode = _MODE_FINISHED
     _update_neopixel()
