@@ -64,6 +64,7 @@ _NPXL_OFF = (0, 0, 0)
 _NPXL_WHT = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
 _NPXL_RED = (_NPXL_BRIGHTNESS, 0, 0)
 _NPXL_ORA = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS // 2, 0)
+_NPXL_YLW = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS, 0)
 _NPXL_GRN = (0, _NPXL_BRIGHTNESS, 0)
 _NPXL_CYA = (0, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
 _NPXL_BLU = (0, 0, _NPXL_BRIGHTNESS)
@@ -83,8 +84,7 @@ _GPS_CONNECTED = False
 
 # 2M Floats is 8MiB, which is how much PSRAM we have.
 # This gives us over half an hour of data storing 22 values per reading, 45
-# times a second -- we cannot save that much to flash, so it's kind of moot.
-# TODO: Reduce this?
+# times a second.
 _BUFFER_SIZE = const(2_000_000)
 
 ####################################
@@ -301,7 +301,7 @@ def send_message(arg=None) -> None:
     msg_header[3] = hdr_flags
 
     if hdr_flags == 0:
-        payload = pack(">d", apogee - initial_altitude)
+        payload = pack(">d", apogee)
     elif hdr_flags == 1:
         gps.clear_buffer()
         time.sleep_ms(100)
@@ -330,7 +330,10 @@ def send_message(arg=None) -> None:
 
 
 def _update_neopixel() -> None:
-    neopixel[0] = _MODE_TO_LED[mode]
+    if mode == _MODE_LAUNCHPAD and _GPS_CONNECTED:
+        neopixel[0] = _NPXL_YLW
+    else:
+        neopixel[0] = _MODE_TO_LED[mode]
     neopixel.write()
 
 
@@ -370,7 +373,7 @@ def _init_radio():
         crcOn=use_CRC,
     )
     radio.forceLDRO(use_LDRO)
-    msg_id = 0
+    msg_id = 1
     hdr_to = secrets["bigbuddy-addr"]
     hdr_from = secrets["lilbuddy-addr"]
     msg_header = bytearray(4)
@@ -478,7 +481,6 @@ def initialize():
         gps.read_raw()
     gps.decode_reading(gps.buffer)
     if hasattr(gps, "valid") and gps.valid == True:
-        # TODO: Change the LED so we know we have a GPS fix
         _GPS_CONNECTED = True
         clock = RTC()
         clock.init(
@@ -531,7 +533,7 @@ def _write_data() -> None:
         unpacked = list(unpack(">ffffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
-    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed"
+    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed\n"
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -549,7 +551,6 @@ def _write_data() -> None:
         launch_num = int(prev_launches[-1][-11:-7]) + 1
 
     with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
-        # TODO: Crank the window size a little higher? 10 maybe?
         with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
             d.write(header_str.encode('UTF-8'))
             for packed_reading in adjusted_ground_readings:
@@ -577,12 +578,16 @@ def _write_data() -> None:
 
 def touchdown(timer: Timer) -> None:
     global mode
+    
     sensor_reading_timer.deinit()
-
-    # TODO: Send a message (with GPS coords) immediately, since we're on the ground?
-    enable_radio()  # The radio lags out sensors, so we can't turn it on until we're on the ground
-    gc.collect()
     gc.enable()
+    gc.collect()
+
+    # Note that we can't turn the radio on until the sensors are off because it takes so long (~400ms) to send a message
+    
+    send_message() # Send a message as soon as we hit the ground
+    enable_radio() # Send future messages once per minute
+
     _write_data()
 
     mode = _MODE_FINISHED
