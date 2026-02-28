@@ -38,28 +38,28 @@ class PA1010:
     def __init__(self, uart_tx, uart_rx):
         self.tx = uart_tx
         self.rx = uart_rx
-        self.buffer = (b'', b'')
+        self.buffer = (b"", b"")
 
         # Set placeholder values to avoid attr checks in speed-critical code
-        self.altitude = 0.0 
+        self.altitude = 0.0
         self.heading = 0.0
         self.speed = 0.0
         self.lat = 0.0
         self.lon = 0.0
-        
+
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
     def initialize(self):
+        # Get a "recommended minimum" and "fix data" every update
+        self._send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
         # Increase the baud rate to the maximum
         self._send_command("PMTK251,115200")
         # Re initialize the UART to use the higher baud rate
         self.uart.init(baudrate=115200, tx=self.tx, rx=self.rx)
-        # Get a "recommended minimum" and "fix data" every update
-        self._send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        # The UART seems to need a hot sec to reinitialize...
+        time.sleep_ms(100)
         # Get a new fix every 100 ms
         self._send_command("PMTK220,100")
-        # Clear the buffer
-        self.uart.read()
 
     def read_raw(self):
         self.buffer = (self.uart.readline(), self.uart.readline())
@@ -101,6 +101,8 @@ class PA1010:
             buf += bytes(f"{checksum:02x}".upper(), "ascii")
         buf += b"\r\n"
         self.uart.write(buf)
+        # Wait for the writes to complete
+        self.uart.flush()
 
     def _set_data_from_rmc(self, m):
         # Modifications by Sam Procter, 2025:
@@ -115,7 +117,7 @@ class PA1010:
         self.minute = int(m.group(2))
         self.second = int(m.group(3))
         self.milli = int(m.group(4))
-        self.valid = m.group(5) == b'A'
+        self.valid = m.group(5) == b"A"
         # self.lat, self.latNS, self.lon, self.lonEW = m.groups()[5:9]
         self.lat = m.group(6)
         self.latNS = m.group(7)
@@ -134,4 +136,3 @@ class PA1010:
         # self.lat, self.latNS, self.lon, self.lonEW = m.groups()[4:8]
         self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))
-

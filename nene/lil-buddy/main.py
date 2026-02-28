@@ -50,7 +50,7 @@ _INITIAL_FINAL_TIME_SEC = const(3)
 _LAUNCHPAD_READINGS = const(_INITIAL_FINAL_TIME_SEC * _SENSOR_FREQ_HZ)
 
 # How far above ground level / below apogee we should be before confirming mode change
-_ALTITUDE_DIFFERENCE = const(20)
+_ALTITUDE_DIFFERENCE = const(6)
 
 # How many readings to consider when changing modes
 _RECENT_READINGS = const(5)
@@ -103,7 +103,7 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
-    global previous_gps_read_ts
+    global previous_gps_read_ts, fresh_gps
 
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
@@ -112,6 +112,7 @@ def get_sensor_readings(timer: Timer) -> None:
 
     if timestamp - previous_gps_read_ts > 100:
         previous_gps_read_ts = timestamp
+        fresh_gps = True
         if _GPS_CONNECTED:
             gps.read_raw()
 
@@ -167,7 +168,7 @@ def enable_radio() -> None:
 def process_reading(
     reading: tuple[bytes, bytearray, bytearray, bytearray, tuple],
 ) -> None:
-    global reading_num, gps_reading_count, recent_altis, apogee
+    global reading_num, gps_reading_count, recent_altis, apogee, fresh_gps
 
     timestamp = int.from_bytes(reading[0], "little")
     (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
@@ -180,12 +181,15 @@ def process_reading(
     estimator.gyroscope = gyro_rdg
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
     estimated_altitude = estimator.altitude  # Use the estimated altitude
-    if mode == _MODE_ASCENT and estimated_altitude > apogee:
-        apogee = estimated_altitude
-    recent_altis.append(estimated_altitude)
+    if mode == _MODE_ASCENT and barometric_altitude > apogee:
+        apogee = barometric_altitude
+    recent_altis.append(barometric_altitude)
     update_mode()
-    if _GPS_CONNECTED and timestamp - previous_gps_read_ts > 100:
-        gps.decode_reading(gps.buffer)
+    skip_gc = False
+    if fresh_gps:
+        gps.decode_reading(reading[4])
+        fresh_gps = False
+        skip_gc = True
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
             ">ffffffffffffffffffffff",
@@ -200,7 +204,7 @@ def process_reading(
             mag_rdg[1],
             mag_rdg[2],
             barometric_altitude,
-            gps.altitude,
+            gps.altitude - initial_gps_altitude,
             ambient_temp,
             gps.heading,
             gps.speed,
@@ -226,7 +230,7 @@ def process_reading(
         buff.store(idx_start + 8, mag_rdg[1])
         buff.store(idx_start + 9, mag_rdg[2])
         buff.store(idx_start + 10, barometric_altitude)
-        buff.store(idx_start + 11, gps.altitude)
+        buff.store(idx_start + 11, gps.altitude - initial_gps_altitude)
         buff.store(idx_start + 12, ambient_temp)
 
         buff.store(idx_start + 13, gps.heading)
@@ -246,7 +250,7 @@ def process_reading(
 
     # Garbage collect every third reading, unless we took a GPS reading this
     # period, in which case skip this garbage collection entirely
-    if gps_reading_count % 3 == 0 and timestamp - previous_gps_read_ts <= 100:
+    if gps_reading_count % 3 == 0 and not skip_gc:
         gc.collect()
     gps_reading_count += 1
 
@@ -356,7 +360,7 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = -5  # 22
+    tx_power = 22  # -5
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -442,13 +446,13 @@ def _init_board():
     boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
     button_pressed = False
 
-    # Mount the filesystem so we can read the config json file and 
+    # Mount the filesystem so we can read the config json file and
     # (after touchdown) write the recorded data to flash
     vfs.mount(vfs.VfsLfs2(bdev, readsize=2048, progsize=256, lookahead=256, mtime=False), "/")  # type: ignore
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, fresh_gps, initial_gps_altitude
 
     mode = _MODE_INITIALIZE
 
@@ -470,16 +474,32 @@ def initialize():
     initial_altitude = alti.decode_alti(alti.buffer)
     apogee = 0.0
 
+    npxl_on = True
+
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
+    while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
+        gps.buffer[0] == None
+        or gps.buffer[1] == None
+        or not hasattr(gps, "valid")
+        or gps.valid == False
+    ):
+        if npxl_on:
+            neopixel[0] = _NPXL_OFF
+            neopixel.write()
+            npxl_on = False
+        else:
+            neopixel[0] = _MODE_TO_LED[mode]
+            neopixel.write()
+            npxl_on = True
 
-    gps.clear_buffer()
-    time.sleep_ms(100)
-    gps.read_raw()
-    while gps.buffer[0] == None and gps.buffer[1] == None:
+        gps.clear_buffer()
         time.sleep_ms(100)
         gps.read_raw()
-    gps.decode_reading(gps.buffer)
+
+        if gps.buffer[0] != None and gps.buffer[1] != None:
+            gps.decode_reading(gps.buffer)
+
     if hasattr(gps, "valid") and gps.valid == True:
         _GPS_CONNECTED = True
         clock = RTC()
@@ -495,12 +515,14 @@ def initialize():
                 0,  # tzinfo, ignored
             )
         )
+        initial_gps_altitude = gps.altitude
     else:
         _GPS_CONNECTED = False
 
     gc.collect()
     gps.clear_buffer()
     previous_gps_read_ts = time.ticks_diff(time.ticks_ms(), init_time)
+    fresh_gps = False
     enable_sensor_recording()
     gc.disable()
 
@@ -509,9 +531,10 @@ def initialize():
 
 
 def ascent() -> None:
-    global launch_time_ms, launch_time_ymdwhms, mode
+    global launch_time_ms, previous_gps_read_ts, launch_time_ymdwhms, mode
     # Nothing really to do here -- sensors are already on, and the switch to NVS is handled by the process_reading function
     launch_time_ms = time.ticks_ms()
+    previous_gps_read_ts = -101  # Force a GPS read next period
     if _GPS_CONNECTED:
         launch_time_ymdwhms = clock.datetime()
     mode = _MODE_ASCENT
@@ -522,7 +545,7 @@ def descent() -> None:
     global mode
     mode = _MODE_DESCENT
     _update_neopixel()
-    # enable_buzzer()
+    enable_buzzer()
 
 
 def _write_data() -> None:
@@ -544,7 +567,14 @@ def _write_data() -> None:
         header_str = f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z \n {header_str}"
 
     # Expect filenames of the form 'launch-XXXX.csv'
-    prev_launches = sorted(list(filter(lambda y: y.startswith('launch-') and y.endswith('.csv.gz'), os.listdir())))
+    prev_launches = sorted(
+        list(
+            filter(
+                lambda y: y.startswith("launch-") and y.endswith(".csv.gz"),
+                os.listdir(),
+            )
+        )
+    )
     if len(prev_launches) == 0:
         launch_num = 1
     else:
@@ -552,16 +582,22 @@ def _write_data() -> None:
 
     with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
         with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
-            d.write(header_str.encode('UTF-8'))
+            d.write(header_str.encode("UTF-8"))
             for packed_reading in adjusted_ground_readings:
                 d.write(
-                    (", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading)) + "\n").encode('UTF-8')
+                    (
+                        ", ".join(
+                            str(x)
+                            for x in unpack(">ffffffffffffffffffffff", packed_reading)
+                        )
+                        + "\n"
+                    ).encode("UTF-8")
                 )
             reading = [0.0] * 22
             for i in range(reading_num):
                 for j in range(22):
                     reading[j] = buff.retrieve_from(i * 22 + j)
-                d.write((", ".join(str(x) for x in reading)+"\n").encode('UTF-8'))
+                d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
 
     # if header_str is not None:
     #     print(header_str)
@@ -578,15 +614,15 @@ def _write_data() -> None:
 
 def touchdown(timer: Timer) -> None:
     global mode
-    
+
     sensor_reading_timer.deinit()
     gc.enable()
     gc.collect()
 
     # Note that we can't turn the radio on until the sensors are off because it takes so long (~400ms) to send a message
-    
-    send_message() # Send a message as soon as we hit the ground
-    enable_radio() # Send future messages once per minute
+
+    send_message()  # Send a message as soon as we hit the ground
+    enable_radio()  # Send future messages once per minute
 
     _write_data()
 
@@ -617,14 +653,14 @@ def share_files() -> None:
 
 
 initialize()
-time.sleep(15)
-ascent()
-time.sleep(5)
-descent()
-time.sleep(5)
-mode = _MODE_TOUCHDOWN
-_update_neopixel()
-touchdown(None)
-print("Done!")
+# time.sleep(15)
+# ascent()
+# time.sleep(5)
+# descent()
+# time.sleep(5)
+# mode = _MODE_TOUCHDOWN
+# _update_neopixel()
+# touchdown(None)
+# print("Done!")
 while True:
     time.sleep(5)
