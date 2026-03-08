@@ -61,14 +61,14 @@ module wings(width, length) {
 }
 
 module board(width, length) {
-    wings(width, length);        
+    //wings(width, length);        
     difference() {
         translate([-1 * h, 0, -1 * BOARD_DEPTH / 2]){
             cube([width - punch_depth, length, BOARD_DEPTH]);
         }
-        translate([3, 6, -1 * BOARD_DEPTH / 2]){
+        translate([3, 1, -1 * BOARD_DEPTH / 2]){
             for(i = [p3in : p6in : width - p3in])
-                for(j = [p3in : p6in : length - p3in])
+                for(j = [p3in : p6in : length ])
                     translate([i, j, 0]){
                         swirly();
                     }
@@ -79,9 +79,14 @@ module board(width, length) {
 
 coupler_width = 95;
 coupler_length = 194;
-payload_width = 97.5;
-payload_length = 127.5;
+payload_width = 99;
+payload_length = 70; // Total length: 177, max shoulder depth: 106.34mm
 
 board(payload_width, payload_length);
-translate([(payload_width - coupler_width)/2, payload_length, 0])
-    board(coupler_width, coupler_length);
+//translate([(payload_width - coupler_width)/2, payload_length, 0])
+//    board(coupler_width, coupler_length);
+stabilizer_width = 8;
+stabilizer_length = 30;
+translate([payload_width / 2, -1 * stabilizer_length / 2 + .5, 0]) {
+    cube([stabilizer_width, stabilizer_length, BOARD_DEPTH], center = true);
+}
