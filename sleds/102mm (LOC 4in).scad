@@ -85,7 +85,7 @@ payload_length = 70; // Total length: 177, max shoulder depth: 106.34mm
 board(payload_width, payload_length);
 //translate([(payload_width - coupler_width)/2, payload_length, 0])
 //    board(coupler_width, coupler_length);
-stabilizer_width = 8;
+stabilizer_width = 7.5;
 stabilizer_length = 30;
 translate([payload_width / 2, -1 * stabilizer_length / 2 + .5, 0]) {
     cube([stabilizer_width, stabilizer_length, BOARD_DEPTH], center = true);
