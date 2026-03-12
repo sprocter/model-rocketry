@@ -1,7 +1,7 @@
 """
 A quick, minimal driver for the PA1010D GPS Module
 
-A few modifications by Sam Procter, 2025: The original (1) used I2C, but it reads one character at a time so was too slow for what I needed. It also used functionality in Micropython's regular expressions module that is not available on the ESP32S3, so I rewrote those portions. I adapted / used the send_command function from (2), which is for CircuitPython rather than MicroPython.
+A few modifications by Sam Procter, 2025: The original (1) used I2C, but it reads one character at a time so was too slow for what I needed. It also used functionality in Micropython's regular expressions module that is not available on the ESP32S3, so I rewrote those portions. I also only need data from GGA messages, so I removed the RMC functionality. I adapted / used the send_command function from (2), which is for CircuitPython rather than MicroPython.
 
 Adapted from
 1. GPS Driver, (c) 2022 by Mike Bell licensed under MIT
@@ -28,10 +28,6 @@ import re
 GGA_DECODE = re.compile(
     r"\$GNGGA,(\d\d)(\d\d)(\d\d)\.(\d\d\d),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),(\d),(\d+),[^,]+,([0-9.]+),"
 )
-RMC_DECODE = re.compile(
-    r"\$GNRMC,(\d\d)(\d\d)(\d\d)\.(\d\d\d),([AV]),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),([0-9.]+),([0-9.]+),(\d\d)(\d\d)(\d\d),"
-)
-
 
 class PA1010:
 
@@ -42,16 +38,14 @@ class PA1010:
 
         # Set placeholder values to avoid attr checks in speed-critical code
         self.altitude = 0.0
-        self.heading = 0.0
-        self.speed = 0.0
         self.lat = 0.0
         self.lon = 0.0
 
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
     def initialize(self):
-        # Get a "recommended minimum" and "fix data" every update
-        self._send_command("PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        # Get "fix data" every update
+        self._send_command("PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
         # Increase the baud rate to the maximum
         self._send_command("PMTK251,115200")
         # Re initialize the UART to use the higher baud rate
@@ -62,25 +56,15 @@ class PA1010:
         self._send_command("PMTK220,100")
 
     def read_raw(self):
-        self.buffer = (self.uart.readline(), self.uart.readline())
+        self.buffer = self.uart.readline()
 
-    def decode_reading(self, reading: tuple[bytearray, bytearray]) -> None:
-        self._decode_sentence(reading[0])
-        self._decode_sentence(reading[1])
+    def decode_reading(self, reading: bytearray) -> None:
+        m = GGA_DECODE.match(reading)
+        if m is not None:
+            self._set_data_from_gga(m)
 
     def clear_buffer(self) -> None:
         self.uart.read()
-
-    def _decode_sentence(self, buf):
-        m = GGA_DECODE.match(buf)
-        if m is not None:
-            # print("GGA parse ok!")
-            self._set_data_from_gga(m)
-        else:
-            m = RMC_DECODE.match(buf)
-            if m is not None:
-                # print("RMC parse ok!")
-                self._set_data_from_rmc(m)
 
     def _send_command(self, command, add_checksum=True):
         """Send a command string
@@ -104,35 +88,15 @@ class PA1010:
         # Wait for the writes to complete
         self.uart.flush()
 
-    def _set_data_from_rmc(self, m):
-        # Modifications by Sam Procter, 2025:
-        # Micropython for ESP32S3 (and others, I believe) does not support
-        # regex's match.groups() functionality, so I commented it out and
-        # replaced it with hardcoded match.group() calls.
-
-        # self.hour, self.minute, self.second, self.milli = [
-        #     int(x) for x in m.groups()[:4]
-        # ]
+    def _set_data_from_gga(self, m):
         self.hour = int(m.group(1))
         self.minute = int(m.group(2))
         self.second = int(m.group(3))
         self.milli = int(m.group(4))
-        self.valid = m.group(5) == b"A"
-        # self.lat, self.latNS, self.lon, self.lonEW = m.groups()[5:9]
-        self.lat = m.group(6)
-        self.latNS = m.group(7)
-        self.lon = m.group(8)
-        self.lonEW = m.group(9)
-        self.speed = float(m.group(10))
-        self.heading = float(m.group(11))
-        # self.day, self.month, self.year = [int(x) for x in m.groups()[11:14]]
-        self.day = int(m.group(12))
-        self.month = int(m.group(13))
-        self.year = int(m.group(14))
-        self.year += 2000
-
-    def _set_data_from_gga(self, m):
-        # self.hour, self.minute, self.seconds, self.millis = [int(x) for x in m.groups()[:4]]
-        # self.lat, self.latNS, self.lon, self.lonEW = m.groups()[4:8]
+        self.lat = m.group(5)
+        self.latNS = m.group(6)
+        self.lon = m.group(7)
+        self.lonEW = m.group(8)
+        self.valid = (m.group(9) == b"1") or (m.group(9) == b"2") 
         self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))

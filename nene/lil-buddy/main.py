@@ -103,18 +103,21 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
-    global previous_gps_read_ts, fresh_gps
+    global previous_gps_read_ts
 
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
     mag.read_raw()
 
+    fresh_gps = False
+
     if timestamp - previous_gps_read_ts > 100:
         previous_gps_read_ts = timestamp
         fresh_gps = True
         if _GPS_CONNECTED:
             gps.read_raw()
+            gps.clear_buffer() # Clear the UART Rx buffer -- otherwise it seems to fill up. Not sure if we're subtly out of sync or what.
 
     schedule(
         process_reading,
@@ -123,6 +126,7 @@ def get_sensor_readings(timer: Timer) -> None:
             alti.buffer,
             mag.buffer,
             accel.buffer,
+            fresh_gps,
             gps.buffer,
         ),
     )
@@ -166,9 +170,9 @@ def enable_radio() -> None:
 
 @micropython.native
 def process_reading(
-    reading: tuple[bytes, bytearray, bytearray, bytearray, tuple],
+    reading: tuple[bytes, bytearray, bytearray, bytearray, bool, bytearray],
 ) -> None:
-    global reading_num, gps_reading_count, recent_altis, apogee, fresh_gps
+    global reading_num, gps_reading_count, recent_altis, apogee
 
     timestamp = int.from_bytes(reading[0], "little")
     (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
@@ -185,14 +189,11 @@ def process_reading(
         apogee = barometric_altitude
     recent_altis.append(barometric_altitude)
     update_mode()
-    skip_gc = False
-    if fresh_gps:
-        gps.decode_reading(reading[4])
-        fresh_gps = False
-        skip_gc = True
+    if reading[4]:
+        gps.decode_reading(reading[5])
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
-            ">ffffffffffffffffffffff",
+            ">ffffffffffffffffffff",
             float(timestamp),
             acc_rdg[0],
             acc_rdg[1],
@@ -206,8 +207,6 @@ def process_reading(
             barometric_altitude,
             gps.altitude - initial_gps_altitude,
             ambient_temp,
-            gps.heading,
-            gps.speed,
             float(gps.lat),
             float(gps.lon),
             estimator.heading,
@@ -218,7 +217,7 @@ def process_reading(
         )
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        idx_start = reading_num * 22
+        idx_start = reading_num * 20
         buff.store(idx_start + 0, float(timestamp))
         buff.store(idx_start + 1, acc_rdg[0])
         buff.store(idx_start + 2, acc_rdg[1])
@@ -233,24 +232,22 @@ def process_reading(
         buff.store(idx_start + 11, gps.altitude - initial_gps_altitude)
         buff.store(idx_start + 12, ambient_temp)
 
-        buff.store(idx_start + 13, gps.heading)
-        buff.store(idx_start + 14, gps.speed)
         # TODO: Should probably check latNS and lonEW once this has been
         # verified to work
-        buff.store(idx_start + 15, float(gps.lat))
-        buff.store(idx_start + 16, float(gps.lon))
+        buff.store(idx_start + 13, float(gps.lat))
+        buff.store(idx_start + 14, float(gps.lon))
 
-        buff.store(idx_start + 17, estimator.heading)
-        buff.store(idx_start + 18, estimator.pitch)
-        buff.store(idx_start + 19, estimator.roll)
-        buff.store(idx_start + 20, estimated_altitude)
-        buff.store(idx_start + 21, estimator.velocity)
+        buff.store(idx_start + 15, estimator.heading)
+        buff.store(idx_start + 16, estimator.pitch)
+        buff.store(idx_start + 17, estimator.roll)
+        buff.store(idx_start + 18, estimated_altitude)
+        buff.store(idx_start + 19, estimator.velocity)
 
         reading_num += 1
 
     # Garbage collect every third reading, unless we took a GPS reading this
     # period, in which case skip this garbage collection entirely
-    if gps_reading_count % 3 == 0 and not skip_gc:
+    if gps_reading_count % 3 == 0 and not reading[4]:
         gc.collect()
     gps_reading_count += 1
 
@@ -467,7 +464,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, fresh_gps, initial_gps_altitude
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude
 
     mode = _MODE_INITIALIZE
 
@@ -520,10 +517,10 @@ def initialize():
         clock = RTC()
         clock.init(
             (
-                gps.year,
-                gps.month,
-                gps.day,
-                gps.hour,
+                2026, # Hardcoded dates since we don't get 
+                3,    # date info from the GPS
+                22,
+                gps.hour - 4, # Timezones, oy
                 gps.minute,
                 gps.second,
                 0,  # microsecond, ignored
@@ -537,7 +534,6 @@ def initialize():
     gc.collect()
     gps.clear_buffer()
     previous_gps_read_ts = time.ticks_diff(time.ticks_ms(), init_time)
-    fresh_gps = False
     enable_sensor_recording()
     gc.disable()
 
@@ -547,7 +543,7 @@ def initialize():
 
 def ascent() -> None:
     global launch_time_ms, previous_gps_read_ts, launch_time_ymdwhms, mode
-    # Nothing really to do here -- sensors are already on, and the switch to NVS is handled by the process_reading function
+    # Nothing really to do here -- sensors are already on, and the switch to using the PSRAM buffer is handled by the process_reading function
     launch_time_ms = time.ticks_ms()
     previous_gps_read_ts = -101  # Force a GPS read next period
     if _GPS_CONNECTED:
@@ -568,10 +564,10 @@ def _write_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">ffffffffffffffffffffff", entry))
+        unpacked = list(unpack(">ffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
-        adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
-    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, gps_heading, gps_speed, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed\n"
+        adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
+    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed\n"
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -603,27 +599,27 @@ def _write_data() -> None:
                     (
                         ", ".join(
                             str(x)
-                            for x in unpack(">ffffffffffffffffffffff", packed_reading)
+                            for x in unpack(">ffffffffffffffffffff", packed_reading)
                         )
                         + "\n"
                     ).encode("UTF-8")
                 )
-            reading = [0.0] * 22
+            reading = [0.0] * 20
             for i in range(reading_num):
-                for j in range(22):
-                    reading[j] = buff.retrieve_from(i * 22 + j)
+                for j in range(20):
+                    reading[j] = buff.retrieve_from(i * 20 + j)
                 d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
 
     # if header_str is not None:
     #     print(header_str)
     # for packed_reading in adjusted_ground_readings:
     #     print(
-    #         ", ".join(str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading))
+    #         ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
     #     )
-    # reading = [0.0] * 22
+    # reading = [0.0] * 20
     # for i in range(reading_num):
-    #     for j in range(22):
-    #         reading[j] = buff.retrieve_from(i * 22 + j)
+    #     for j in range(20):
+    #         reading[j] = buff.retrieve_from(i * 20 + j)
     #     print(", ".join(str(x) for x in reading))
 
 
