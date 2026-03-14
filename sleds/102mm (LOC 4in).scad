@@ -79,14 +79,17 @@ module board(width, length) {
 
 coupler_width = 95;
 coupler_length = 194;
-payload_width = 99;
+payload_width = 99.5;
 payload_length = 70; // Total length: 177, max shoulder depth: 106.34mm
 
 board(payload_width, payload_length);
 //translate([(payload_width - coupler_width)/2, payload_length, 0])
 //    board(coupler_width, coupler_length);
 stabilizer_width = 7.5;
-stabilizer_length = 30;
+stabilizer_length = 110;
 translate([payload_width / 2, -1 * stabilizer_length / 2 + .5, 0]) {
     cube([stabilizer_width, stabilizer_length, BOARD_DEPTH], center = true);
+    translate([0, -1 * stabilizer_length / 2 + .5, 0]) {
+        cylinder(h = BOARD_DEPTH, d = stabilizer_width, center = true);
+    }
 }
