@@ -661,6 +661,8 @@ def share_files() -> None:
         time.sleep_ms(10)  # Give things a chance to settle
     gc.collect()
     uftpd.start(splash=False)
+    while True:
+        time.sleep(5)
 
 
 initialize()
