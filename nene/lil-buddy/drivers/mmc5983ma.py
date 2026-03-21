@@ -37,6 +37,10 @@ _X_SI_OFFSET = const(0.09523398)
 _Y_SI_OFFSET = const(-0.3274871)
 _Z_SI_OFFSET = const(-0.22487582)
 
+# Page 2 of datasheet gives 16384 "Counts"/G[auss].
+# 1G = .0001T, so .01G = 1.0E-6T, so (16384/10000)*100 = 163.84 
+_MICROTESLA_SCALE_FACTOR = const(163.84)
+
 class MMC5983MA:
 
     def __init__(self, i2c: I2C) -> None:
@@ -53,7 +57,7 @@ class MMC5983MA:
     def _calculate_offsets(self) -> None:
         """Calculate the device's local offsets and store them
 
-        This implements the procedure (described on pg 18 of the datasheet) for calculating the three axes' offsets. It modifies the _x|y|z_offset variables, which are used in the decode_mag function.
+        This implements the procedure (described on pg 18 of the datasheet) for calculating the three axes' offsets. It modifies the _x|y|z_offset variables, which are used in the _decode_mag_internal function.
         """
         # "Set" operation
         # 0 0 0 0 1 0 0 0
@@ -64,7 +68,7 @@ class MMC5983MA:
         self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
-        (x1, y1, z1) = self.decode_mag(self.buffer)
+        (x1, y1, z1) = self._decode_mag_internal(self.buffer)
 
         # "Reset" operation
         # 0 0 0 1 0 0 0 0
@@ -75,7 +79,7 @@ class MMC5983MA:
         self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
-        (x2, y2, z2) = self.decode_mag(self.buffer)
+        (x2, y2, z2) = self._decode_mag_internal(self.buffer)
 
         self._x_offset = (x1 + x2) / 2
         self._y_offset = (y1 + y2) / 2
@@ -116,7 +120,15 @@ class MMC5983MA:
         self.i2c.readfrom_mem_into(_MMC5983MA_ADDR, _MMC5983MA_XOUT0, self.buffer)
 
     @micropython.native
-    def decode_mag(self, reading: bytearray) -> tuple[float, float, float]:
+    def _decode_mag_internal(self, reading: bytearray) -> tuple[float, float, float]:
+        """Decode a reading from the magnetometer into its internal representation
+
+        This decodes the supplied magnetometer reading into an internal / unscaled representation. This is useful for maintaining precision, but is probably of less interest to users who may want SI or other units.
+
+        :param bytearray reading: The raw bytes retrieved from the magnetometer
+        :returns: The strength of the sensed X, Y, and Z magnetic fields 
+        :rtype: tuple[float, float, float]
+        """
         x_raw = reading[0] << 10 | reading[1] << 2 | reading[6] >> 6
         y_raw = reading[2] << 10 | reading[3] << 2 | ((reading[6] >> 4) & 0x03)
         z_raw = reading[4] << 10 | reading[5] << 2 | ((reading[6] >> 2) & 0x03)
@@ -124,3 +136,15 @@ class MMC5983MA:
         y_adj = (y_raw - self._y_offset - _Y_HI_OFFSET) * _Y_SI_OFFSET
         z_adj = (z_raw - self._z_offset - _Z_HI_OFFSET) * _Z_SI_OFFSET
         return (x_adj, y_adj, z_adj)
+
+    @micropython.native
+    def decode_mag(self, reading: bytearray) -> tuple[float, float, float]:
+        """Decode a reading from the magnetometer into microteslas
+
+        This decodes the supplied magnetometer reading into microteslas.
+        
+        :param bytearray reading: The raw bytes retrieved from the magnetometer
+        :returns: The strength of the sensed X, Y, and Z magnetic fields 
+        :rtype: tuple[float, float, float]
+        """
+        return tuple(x/_MICROTESLA_SCALE_FACTOR for x in self._decode_mag_internal(reading))

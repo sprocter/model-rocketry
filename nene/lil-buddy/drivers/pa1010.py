@@ -34,7 +34,7 @@ class PA1010:
     def __init__(self, uart_tx, uart_rx):
         self.tx = uart_tx
         self.rx = uart_rx
-        self.buffer = (b"", b"")
+        self.buffer = b""
 
         # Set placeholder values to avoid attr checks in speed-critical code
         self.altitude = 0.0
@@ -59,9 +59,10 @@ class PA1010:
         self.buffer = self.uart.readline()
 
     def decode_reading(self, reading: bytearray) -> None:
-        m = GGA_DECODE.match(reading)
-        if m is not None:
-            self._set_data_from_gga(m)
+        if reading is not None:
+            m = GGA_DECODE.match(reading)
+            if m is not None:
+                self._set_data_from_gga(m)
 
     def clear_buffer(self) -> None:
         self.uart.read()

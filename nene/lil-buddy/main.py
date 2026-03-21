@@ -117,7 +117,7 @@ def get_sensor_readings(timer: Timer) -> None:
         fresh_gps = True
         if _GPS_CONNECTED:
             gps.read_raw()
-            gps.clear_buffer() # Clear the UART Rx buffer -- otherwise it seems to fill up. Not sure if we're subtly out of sync or what.
+            gps.clear_buffer()  # Clear the UART Rx buffer -- otherwise it seems to fill up. Not sure if we're subtly out of sync or what.
 
     schedule(
         process_reading,
@@ -372,7 +372,7 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = 22  # -5
+    tx_power = -5  # 22
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -464,7 +464,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc
 
     mode = _MODE_INITIALIZE
 
@@ -491,10 +491,7 @@ def initialize():
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     recent_altis = deque([], _RECENT_READINGS)
     while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
-        gps.buffer[0] == None
-        or gps.buffer[1] == None
-        or not hasattr(gps, "valid")
-        or gps.valid == False
+        gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
     ):
         if npxl_on:
             neopixel[0] = _NPXL_OFF
@@ -509,7 +506,7 @@ def initialize():
         time.sleep_ms(100)
         gps.read_raw()
 
-        if gps.buffer[0] != None and gps.buffer[1] != None:
+        if gps.buffer != None:
             gps.decode_reading(gps.buffer)
 
     if hasattr(gps, "valid") and gps.valid == True:
@@ -517,10 +514,10 @@ def initialize():
         clock = RTC()
         clock.init(
             (
-                2026, # Hardcoded dates since we don't get 
-                3,    # date info from the GPS
-                22,
-                gps.hour - 4, # Timezones, oy
+                2026,  # Hardcoded dates since we don't get
+                4,  # date info from the GPS
+                19,
+                gps.hour - 4,  # Timezones, oy
                 gps.minute,
                 gps.second,
                 0,  # microsecond, ignored
@@ -530,6 +527,8 @@ def initialize():
         initial_gps_altitude = gps.altitude
     else:
         _GPS_CONNECTED = False
+
+    initial_batt_soc = batt_monitor.charge_percent
 
     gc.collect()
     gps.clear_buffer()
@@ -556,7 +555,7 @@ def descent() -> None:
     global mode
     mode = _MODE_DESCENT
     _update_neopixel()
-    enable_buzzer()
+    # enable_buzzer()
 
 
 def _write_data() -> None:
@@ -567,7 +566,10 @@ def _write_data() -> None:
         unpacked = list(unpack(">ffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
-    header_str = "time, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, baro_alt, gps_alt, temp, lat, lon, est_yaw, est_pitch, est_roll, est_alt, est_speed\n"
+    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
+    batt_hdr_str = (
+        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
+    )
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -575,52 +577,57 @@ def _write_data() -> None:
         hour = launch_time_ymdwhms[4]
         minute = launch_time_ymdwhms[5]
         second = launch_time_ymdwhms[6]
-        header_str = f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z \n {header_str}"
-
-    # Expect filenames of the form 'launch-XXXX.csv'
-    prev_launches = sorted(
-        list(
-            filter(
-                lambda y: y.startswith("launch-") and y.endswith(".csv.gz"),
-                os.listdir(),
-            )
+        date_hdr_str = (
+            f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
         )
-    )
-    if len(prev_launches) == 0:
-        launch_num = 1
     else:
-        launch_num = int(prev_launches[-1][-11:-7]) + 1
+        date_hdr_str = "No Date"
+    header_str = f"{date_hdr_str},{batt_hdr_str},\n{label_hdr_str}\n"
 
-    with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
-        with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
-            d.write(header_str.encode("UTF-8"))
-            for packed_reading in adjusted_ground_readings:
-                d.write(
-                    (
-                        ", ".join(
-                            str(x)
-                            for x in unpack(">ffffffffffffffffffff", packed_reading)
-                        )
-                        + "\n"
-                    ).encode("UTF-8")
-                )
-            reading = [0.0] * 20
-            for i in range(reading_num):
-                for j in range(20):
-                    reading[j] = buff.retrieve_from(i * 20 + j)
-                d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
-
-    # if header_str is not None:
-    #     print(header_str)
-    # for packed_reading in adjusted_ground_readings:
-    #     print(
-    #         ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
+    # # Expect filenames of the form 'launch-XXXX.csv'
+    # prev_launches = sorted(
+    #     list(
+    #         filter(
+    #             lambda y: y.startswith("launch-") and y.endswith(".csv.gz"),
+    #             os.listdir(),
+    #         )
     #     )
-    # reading = [0.0] * 20
-    # for i in range(reading_num):
-    #     for j in range(20):
-    #         reading[j] = buff.retrieve_from(i * 20 + j)
-    #     print(", ".join(str(x) for x in reading))
+    # )
+    # if len(prev_launches) == 0:
+    #     launch_num = 1
+    # else:
+    #     launch_num = int(prev_launches[-1][-11:-7]) + 1
+
+    # with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
+    #     with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
+    #         d.write(header_str.encode("UTF-8"))
+    #         for packed_reading in adjusted_ground_readings:
+    #             d.write(
+    #                 (
+    #                     ", ".join(
+    #                         str(x)
+    #                         for x in unpack(">ffffffffffffffffffff", packed_reading)
+    #                     )
+    #                     + "\n"
+    #                 ).encode("UTF-8")
+    #             )
+    #         reading = [0.0] * 20
+    #         for i in range(reading_num):
+    #             for j in range(20):
+    #                 reading[j] = buff.retrieve_from(i * 20 + j)
+    #             d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
+
+    if header_str is not None:
+        print(header_str, end="")
+    for packed_reading in adjusted_ground_readings:
+        print(
+            ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
+        )
+    reading = [0.0] * 20
+    for i in range(reading_num):
+        for j in range(20):
+            reading[j] = buff.retrieve_from(i * 20 + j)
+        print(", ".join(str(x) for x in reading))
 
 
 def touchdown(timer: Timer) -> None:
@@ -630,7 +637,7 @@ def touchdown(timer: Timer) -> None:
     gc.enable()
     gc.collect()
 
-    _write_data() # Get the data safely written first
+    _write_data()  # Get the data safely written first
 
     # Note that we can't turn the radio on until the sensors are off because it takes so long (~400ms) to send a message
 
@@ -666,14 +673,14 @@ def share_files() -> None:
 
 
 initialize()
-# time.sleep(15)
-# ascent()
-# time.sleep(5)
-# descent()
-# time.sleep(5)
-# mode = _MODE_TOUCHDOWN
-# _update_neopixel()
-# touchdown(None)
-# print("Done!")
+time.sleep(15)
+ascent()
+time.sleep(5)
+descent()
+time.sleep(5)
+mode = _MODE_TOUCHDOWN
+_update_neopixel()
+touchdown(None)
+print("Done!")
 while True:
     time.sleep(5)
