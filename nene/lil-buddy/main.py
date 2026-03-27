@@ -307,8 +307,7 @@ def send_message(arg=None) -> None:
         retries = 0  # Avoid hanging if something went wrong with the GPS
 
         while retries < 30 and (
-            gps.buffer[0] == None
-            or gps.buffer[1] == None
+            gps.buffer == None
             or not hasattr(gps, "valid")
             or gps.valid == False
         ):
@@ -325,7 +324,7 @@ def send_message(arg=None) -> None:
             time.sleep_ms(100)
             gps.read_raw()
 
-            if gps.buffer[0] != None and gps.buffer[1] != None:
+            if gps.buffer != None:
                 gps.decode_reading(gps.buffer)
 
         if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
@@ -671,16 +670,21 @@ def share_files() -> None:
     while True:
         time.sleep(5)
 
-
-initialize()
-time.sleep(15)
-ascent()
-time.sleep(5)
-descent()
-time.sleep(5)
-mode = _MODE_TOUCHDOWN
-_update_neopixel()
-touchdown(None)
-print("Done!")
-while True:
+try:
+    initialize()
+    time.sleep(15)
+    ascent()
     time.sleep(5)
+    descent()
+    time.sleep(5)
+    mode = _MODE_TOUCHDOWN
+    _update_neopixel()
+    touchdown(None)
+    print("Done!")
+    while True:
+        time.sleep(5)
+except Exception:
+    # If something goes wrong after launch but before we're done, try and 
+    # save what data we have and turn on the buzzer / radio
+    if mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
+        touchdown(None)
