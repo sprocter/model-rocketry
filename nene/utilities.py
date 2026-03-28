@@ -11,12 +11,11 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-import json, vfs, os, esp32, machine, time
-from random import randint
-from machine import I2C
-
 
 def generate_secrets():
+    import json
+    from random import randint
+
     secrets = {
         "wifi-ssid": "YourWiFiNameHere",
         "wifi-key": "YourWifiPasswordHere",
@@ -29,11 +28,15 @@ def generate_secrets():
 
 
 def reset_filesystem():
+    import vfs
+
     vfs.umount("/")
     vfs.VfsLfs2.mkfs(bdev)  # type: ignore
 
 
 def reset_nvs():
+    import esp32
+
     p = esp32.Partition.find(esp32.Partition.TYPE_DATA, label="nvs")[0]
 
     # p.info()[3] is partition size
@@ -44,6 +47,8 @@ def reset_nvs():
 
 
 def print_filesystem_space():
+    import os
+
     stat = os.statvfs("/")
     size = stat[1] * stat[2]
     free = stat[0] * stat[3]
@@ -59,6 +64,8 @@ def print_filesystem_space():
 
 def print_adxl375_offsets():
     from adxl375 import ADXL375
+    from machine import I2C
+    import time
 
     i2c = I2C(sda=41, scl=40)
     accelerometer = ADXL375(i2c)
@@ -84,6 +91,8 @@ def print_adxl375_offsets():
 
 def print_icm20649_offsets():
     from icm20649 import ICM20649
+    from machine import I2C
+    import time
 
     i2c = I2C(scl=9, sda=8)
     accelerometer = ICM20649(i2c)
@@ -128,13 +137,19 @@ def print_mmc5983_offsets(duration=10):
 
     """
     from mmc5983ma import MMC5983MA
+    from machine import I2C
+    import time
 
     i2c = I2C(scl=9, sda=8)
     mag = MMC5983MA(i2c)
     mag.initialize()
 
-    print("Please ensure X, Y, and Z hard iron constants are set to 0 and the X, Y, and Z soft iron constants are set to 1 in the MMC5983MA Driver")
-    print("Gently move the device in figure-eight like shapes while rotating it back and forth")
+    print(
+        "Please ensure X, Y, and Z hard iron constants are set to 0 and the X, Y, and Z soft iron constants are set to 1 in the MMC5983MA Driver"
+    )
+    print(
+        "Gently move the device in figure-eight like shapes while rotating it back and forth"
+    )
     print("Calibration begins in 3 seconds.")
     time.sleep(3)
     print(f"Calibration beginning now, it will take {duration} seconds...")
@@ -191,4 +206,31 @@ def get_alti():
     print(alti.decode_reading(alti.buffer))
 
 
-print_filesystem_space()
+def monitor_charging():
+    """Print battery charging info to the terminal
+
+    This is designed to be run on an Adafruit KB2040 (which they give away with larger orders, so it's easy to have spares laying around) that's connected to a MAX17048 breakout via STEMMA/QWIIC. It will print battery charge level and rate info to the terminal every five seconds. This is useful when you can't charge your batteries using a Feather (perhaps because they need to charge at a different rate). Using something like SparkFun's Adjustable LiPo Charger is nice for that, but it doesn't report detailed charge info -- just "Full" or "Not Full" via an onboard LED.
+    """
+    from machine import I2C
+    from struct import unpack
+    import time
+
+    _MAX17048_ADDR = const(0x36)
+
+    _MAX17048_SOC = const(0x04)
+    _MAX17048_CRATE = const(0x16)
+
+    i2c = I2C(scl=13, sda=12)
+
+    while True:
+        soc = i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_SOC, 2)
+        charge_percent = (unpack(">H", soc)[0]) / 256.0
+
+        rate = i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_CRATE, 2)
+        charge_rate = (unpack(">h", rate)[0]) * 0.208
+
+        print(f"Battery is at {charge_percent}%, charging at {charge_rate}%/hr.")
+        time.sleep(5)
+
+
+monitor_charging()
