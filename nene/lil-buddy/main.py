@@ -41,6 +41,11 @@ _MODE_TOUCHDOWN = const(4)
 _MODE_FINISHED = const(5)
 _MODE_WIFI = const(6)
 
+_RELENG_DEVELOP = const(0)
+_RELENG_TEST = const(1)
+_RELENG_RELEASE = const(2)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
 
@@ -50,7 +55,10 @@ _INITIAL_FINAL_TIME_SEC = const(3)
 _LAUNCHPAD_READINGS = const(_INITIAL_FINAL_TIME_SEC * _SENSOR_FREQ_HZ)
 
 # How far above ground level / below apogee we should be before confirming mode change
-_ALTITUDE_DIFFERENCE = const(6)
+if _RELEASE_LEVEL == _RELENG_RELEASE:
+    _ALTITUDE_DIFFERENCE = 6
+else:
+    _ALTITUDE_DIFFERENCE = 1
 
 # How many readings to consider when changing modes
 _RECENT_READINGS = const(5)
@@ -371,7 +379,10 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = -5  # 22
+    if _RELEASE_LEVEL == _RELENG_RELEASE:
+        tx_power = 22
+    else:
+        tx_power = -5
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -554,7 +565,8 @@ def descent() -> None:
     global mode
     mode = _MODE_DESCENT
     _update_neopixel()
-    # enable_buzzer()
+    if _RELEASE_LEVEL != _RELENG_DEVELOP:
+        enable_buzzer()
 
 
 def _write_data() -> None:
@@ -583,50 +595,51 @@ def _write_data() -> None:
         date_hdr_str = "No Date"
     header_str = f"{date_hdr_str},{batt_hdr_str},\n{label_hdr_str}\n"
 
-    # # Expect filenames of the form 'launch-XXXX.csv'
-    # prev_launches = sorted(
-    #     list(
-    #         filter(
-    #             lambda y: y.startswith("launch-") and y.endswith(".csv.gz"),
-    #             os.listdir(),
-    #         )
-    #     )
-    # )
-    # if len(prev_launches) == 0:
-    #     launch_num = 1
-    # else:
-    #     launch_num = int(prev_launches[-1][-11:-7]) + 1
-
-    # with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
-    #     with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
-    #         d.write(header_str.encode("UTF-8"))
-    #         for packed_reading in adjusted_ground_readings:
-    #             d.write(
-    #                 (
-    #                     ", ".join(
-    #                         str(x)
-    #                         for x in unpack(">ffffffffffffffffffff", packed_reading)
-    #                     )
-    #                     + "\n"
-    #                 ).encode("UTF-8")
-    #             )
-    #         reading = [0.0] * 20
-    #         for i in range(reading_num):
-    #             for j in range(20):
-    #                 reading[j] = buff.retrieve_from(i * 20 + j)
-    #             d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
-
-    if header_str is not None:
-        print(header_str, end="")
-    for packed_reading in adjusted_ground_readings:
-        print(
-            ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
+    if _RELEASE_LEVEL != _RELENG_DEVELOP:
+        # Expect filenames of the form 'launch-XXXX.csv'
+        prev_launches = sorted(
+            list(
+                filter(
+                    lambda y: y.startswith("launch-") and y.endswith(".csv.gz"),
+                    os.listdir(),
+                )
+            )
         )
-    reading = [0.0] * 20
-    for i in range(reading_num):
-        for j in range(20):
-            reading[j] = buff.retrieve_from(i * 20 + j)
-        print(", ".join(str(x) for x in reading))
+        if len(prev_launches) == 0:
+            launch_num = 1
+        else:
+            launch_num = int(prev_launches[-1][-11:-7]) + 1
+
+        with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
+            with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
+                d.write(header_str.encode("UTF-8"))
+                for packed_reading in adjusted_ground_readings:
+                    d.write(
+                        (
+                            ", ".join(
+                                str(x)
+                                for x in unpack(">ffffffffffffffffffff", packed_reading)
+                            )
+                            + "\n"
+                        ).encode("UTF-8")
+                    )
+                reading = [0.0] * 20
+                for i in range(reading_num):
+                    for j in range(20):
+                        reading[j] = buff.retrieve_from(i * 20 + j)
+                    d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
+    else:
+        if header_str is not None:
+            print(header_str, end="")
+        for packed_reading in adjusted_ground_readings:
+            print(
+                ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
+            )
+        reading = [0.0] * 20
+        for i in range(reading_num):
+            for j in range(20):
+                reading[j] = buff.retrieve_from(i * 20 + j)
+            print(", ".join(str(x) for x in reading))
 
 
 def touchdown(timer: Timer) -> None:
@@ -672,15 +685,15 @@ def share_files() -> None:
 
 try:
     initialize()
-    time.sleep(15)
-    ascent()
-    time.sleep(5)
-    descent()
-    time.sleep(5)
-    mode = _MODE_TOUCHDOWN
-    _update_neopixel()
-    touchdown(None)
-    print("Done!")
+    if _RELEASE_LEVEL == _RELENG_DEVELOP:
+        time.sleep(15)
+        ascent()
+        time.sleep(5)
+        descent()
+        time.sleep(5)
+        mode = _MODE_TOUCHDOWN
+        _update_neopixel()
+        touchdown(None)
     while True:
         time.sleep(5)
 except Exception:
