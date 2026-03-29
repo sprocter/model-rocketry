@@ -44,7 +44,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+_RELEASE_LEVEL = const(_RELENG_RELEASE)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -319,21 +319,14 @@ def send_message(arg=None) -> None:
             or not hasattr(gps, "valid")
             or gps.valid == False
         ):
-            if npxl_on:
-                neopixel[0] = _NPXL_OFF
-                neopixel.write()
-                npxl_on = False
-            else:
-                neopixel[0] = _MODE_TO_LED[mode]
-                neopixel.write()
-                npxl_on = True
-
             gps.clear_buffer()
             time.sleep_ms(100)
             gps.read_raw()
 
             if gps.buffer != None:
                 gps.decode_reading(gps.buffer)
+
+            retries += 1
 
         if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
             payload = pack(">HHBHHB", 0, 0, 0, 0, 0, 0)
@@ -379,10 +372,11 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    if _RELEASE_LEVEL == _RELENG_RELEASE:
-        tx_power = 22
-    else:
-        tx_power = -5
+    tx_power = 22
+    # if _RELEASE_LEVEL == _RELENG_RELEASE:
+    #     tx_power = 22
+    # else:
+    #     tx_power = -5
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -455,7 +449,7 @@ def _init_board():
     _update_neopixel()
 
     # Overclock the CPU
-    machine.freq(240000000)
+    machine.freq(240_000_000)
 
     # Initialize timers
     sensor_reading_timer = Timer(0)  # Controls reading from sensors
@@ -565,7 +559,7 @@ def descent() -> None:
     global mode
     mode = _MODE_DESCENT
     _update_neopixel()
-    if _RELEASE_LEVEL != _RELENG_DEVELOP:
+    if _RELEASE_LEVEL == _RELENG_RELEASE:
         enable_buzzer()
 
 
@@ -578,9 +572,8 @@ def _write_data() -> None:
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
     label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
-    batt_hdr_str = (
-        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
-    )
+    batt_hdr_str = "Battery Readings Disabled"
+        # f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
