@@ -44,7 +44,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_RELEASE)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -315,9 +315,7 @@ def send_message(arg=None) -> None:
         retries = 0  # Avoid hanging if something went wrong with the GPS
 
         while retries < 30 and (
-            gps.buffer == None
-            or not hasattr(gps, "valid")
-            or gps.valid == False
+            gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
         ):
             gps.clear_buffer()
             time.sleep_ms(100)
@@ -372,11 +370,10 @@ def _init_radio():
     spreading_factor = 10
     coding_rate = 8
     sync_word = 0x12  # private
-    tx_power = 22
-    # if _RELEASE_LEVEL == _RELENG_RELEASE:
-    #     tx_power = 22
-    # else:
-    #     tx_power = -5
+    if _RELEASE_LEVEL == _RELENG_RELEASE:
+        tx_power = 22
+    else:
+        tx_power = -5
     mA_limit = 125.0
     implicit_header = False
     use_CRC = False
@@ -572,8 +569,9 @@ def _write_data() -> None:
         unpacked[0] -= time_offset_ms
         adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
     label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
-    batt_hdr_str = "Battery Readings Disabled"
-        # f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
+    batt_hdr_str = (
+        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
+    )
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -626,7 +624,9 @@ def _write_data() -> None:
             print(header_str, end="")
         for packed_reading in adjusted_ground_readings:
             print(
-                ", ".join(str(x) for x in unpack(">ffffffffffffffffffff", packed_reading))
+                ", ".join(
+                    str(x) for x in unpack(">ffffffffffffffffffff", packed_reading)
+                )
             )
         reading = [0.0] * 20
         for i in range(reading_num):
@@ -676,6 +676,7 @@ def share_files() -> None:
     while True:
         time.sleep(5)
 
+
 try:
     initialize()
     if _RELEASE_LEVEL == _RELENG_DEVELOP:
@@ -690,7 +691,7 @@ try:
     while True:
         time.sleep(5)
 except Exception:
-    # If something goes wrong after launch but before we're done, try and 
+    # If something goes wrong after launch but before we're done, try and
     # save what data we have and turn on the buzzer / radio
     if mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         touchdown(None)
