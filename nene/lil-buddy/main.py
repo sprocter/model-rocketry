@@ -44,7 +44,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+_RELEASE_LEVEL = const(_RELENG_TEST)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -180,7 +180,7 @@ def enable_radio() -> None:
 def process_reading(
     reading: tuple[bytes, bytearray, bytearray, bytearray, bool, bytearray],
 ) -> None:
-    global reading_num, gps_reading_count, recent_altis, apogee
+    global reading_num, gps_reading_count, ascent_altis, apogee
 
     timestamp = int.from_bytes(reading[0], "little")
     (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
@@ -195,7 +195,11 @@ def process_reading(
     estimated_altitude = estimator.altitude  # Use the estimated altitude
     if mode == _MODE_ASCENT and barometric_altitude > apogee:
         apogee = barometric_altitude
-    recent_altis.append(barometric_altitude)
+    if mode == _MODE_LAUNCHPAD or mode == _MODE_ASCENT:
+        ascent_altis.append(barometric_altitude)
+    elif mode == _MODE_DESCENT:
+        if len(descent_altis) == 0 or timestamp - descent_altis[-1][0] >= 1000:
+            descent_altis.append((timestamp, barometric_altitude))
     update_mode()
     if reading[4]:
         gps.decode_reading(reading[5])
@@ -261,41 +265,36 @@ def process_reading(
 
 
 def update_mode() -> None:
-    global mode
     if mode == _MODE_LAUNCHPAD and have_liftoff():
         ascent()
     elif mode == _MODE_ASCENT and started_descent():
         descent()
     elif mode == _MODE_DESCENT and touched_down():
-        mode = _MODE_TOUCHDOWN
-        _update_neopixel()
-        # Wait a final few seconds then remove timer and turn off sensors
-        touchdown_timer.init(mode=Timer.ONE_SHOT, period=3000, callback=touchdown)
+        touchdown()
 
 
 @micropython.native
 def have_liftoff() -> bool:
     threshold = _ALTITUDE_DIFFERENCE
-    return sum(i > threshold for i in recent_altis) > _CONFIRMATORY_READINGS
+    return sum(i > threshold for i in ascent_altis) > _CONFIRMATORY_READINGS
 
 
 @micropython.native
 def started_descent() -> bool:
     threshold = apogee - _ALTITUDE_DIFFERENCE
-    return sum(i < threshold for i in recent_altis) > _CONFIRMATORY_READINGS
+    return sum(i < threshold for i in ascent_altis) > _CONFIRMATORY_READINGS
 
 
 @micropython.native
 def touched_down() -> bool:
-    if apogee < _ALTITUDE_DIFFERENCE:
-        return False  # If we haven't gone up at least _A_D
-    if max(recent_altis) > (apogee - _ALTITUDE_DIFFERENCE):
-        return False  # If we haven't fallen at least _A_D from apogee
-    n = len(recent_altis)
-    u = sum(recent_altis) / n
-    u2 = u**2
-    variance = (1 / n) * sum([x**2 - 2 * u * x + u2 for x in recent_altis])
-    return abs(variance) < 0.001
+    if len(descent_altis) < 5:
+        return False
+    min_alt = descent_altis[-1][1] - .05 # 5cm
+    max_alt = descent_altis[-1][1] + .05
+    for _, alti in descent_altis:
+        if alti < min_alt or alti > max_alt:
+            return False
+    return True
 
 
 def send_message(arg=None) -> None:
@@ -433,7 +432,7 @@ def _init_devices() -> None:
 
 
 def _init_board():
-    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, touchdown_timer, neopixel
+    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, neopixel
 
     # Clean up memory to reduce issues with fragmentation
     gc.collect()
@@ -450,9 +449,8 @@ def _init_board():
 
     # Initialize timers
     sensor_reading_timer = Timer(0)  # Controls reading from sensors
-    touchdown_timer = Timer(1)  # One-shot after landing to get a few extra seconds
-    radio_timer = Timer(2)  # Controls radio broadcasts
-    buzzer_timer = Timer(3)  # Controls the changing pitch of the buzzer
+    radio_timer = Timer(1)  # Controls radio broadcasts
+    buzzer_timer = Timer(2)  # Controls the changing pitch of the buzzer
 
     # Initialize the "boot" button and register its handler
     boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
@@ -465,7 +463,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, recent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc
 
     mode = _MODE_INITIALIZE
 
@@ -490,7 +488,8 @@ def initialize():
     npxl_on = True
 
     ground_readings = deque([], _LAUNCHPAD_READINGS)
-    recent_altis = deque([], _RECENT_READINGS)
+    ascent_altis = deque([], _RECENT_READINGS)
+    descent_altis = deque([], _RECENT_READINGS)
     while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
         gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
     ):
@@ -527,6 +526,7 @@ def initialize():
         )
         initial_gps_altitude = gps.altitude
     else:
+        initial_gps_altitude = 0
         _GPS_CONNECTED = False
 
     initial_batt_soc = batt_monitor.charge_percent
@@ -586,7 +586,7 @@ def _write_data() -> None:
         date_hdr_str = "No Date"
     header_str = f"{date_hdr_str},{batt_hdr_str},\n{label_hdr_str}\n"
 
-    if _RELEASE_LEVEL != _RELENG_DEVELOP:
+    if _RELEASE_LEVEL == _RELENG_RELEASE:
         # Expect filenames of the form 'launch-XXXX.csv'
         prev_launches = sorted(
             list(
@@ -635,9 +635,12 @@ def _write_data() -> None:
             print(", ".join(str(x) for x in reading))
 
 
-def touchdown(timer: Timer) -> None:
+def touchdown() -> None:
     global mode
 
+    mode = _MODE_TOUCHDOWN
+    _update_neopixel()
+    
     sensor_reading_timer.deinit()
     gc.enable()
     gc.collect()
