@@ -44,7 +44,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_TEST)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -127,21 +127,19 @@ def get_sensor_readings(timer: Timer) -> None:
             gps.read_raw()
             gps.clear_buffer()  # Clear the UART Rx buffer -- otherwise it seems to fill up. Not sure if we're subtly out of sync or what.
 
-    schedule(
-        process_reading,
-        (
-            timestamp.to_bytes(3, "little"),
-            alti.buffer,
-            mag.buffer,
-            accel.buffer,
-            fresh_gps,
-            gps.buffer,
-        ),
-    )
+    # TODO: Refactor this -- normal parameters / not a giant tuple. Extract sensor readings into their own method? Clean up generally.
+    process_reading((
+        timestamp.to_bytes(3, "little"),
+        alti.buffer,
+        mag.buffer,
+        accel.buffer,
+        fresh_gps,
+        gps.buffer,
+    ))
 
 
 def send_radio_message(timer: Timer) -> None:
-    schedule(send_message, None)
+    send_message()
 
 
 def button_handler(boot_button: Pin) -> None:
@@ -289,15 +287,15 @@ def started_descent() -> bool:
 def touched_down() -> bool:
     if len(descent_altis) < 5:
         return False
-    min_alt = descent_altis[-1][1] - .05 # 5cm
-    max_alt = descent_altis[-1][1] + .05
+    min_alt = descent_altis[-1][1] - 0.05  # 5cm
+    max_alt = descent_altis[-1][1] + 0.05
     for _, alti in descent_altis:
         if alti < min_alt or alti > max_alt:
             return False
     return True
 
 
-def send_message(arg=None) -> None:
+def send_message() -> None:
     global msg_id, msg_header
 
     hdr_id = msg_id % 255
@@ -640,7 +638,7 @@ def touchdown() -> None:
 
     mode = _MODE_TOUCHDOWN
     _update_neopixel()
-    
+
     sensor_reading_timer.deinit()
     gc.enable()
     gc.collect()
@@ -688,13 +686,10 @@ try:
         time.sleep(5)
         descent()
         time.sleep(5)
-        mode = _MODE_TOUCHDOWN
-        _update_neopixel()
-        touchdown(None)
     while True:
         time.sleep(5)
 except Exception:
     # If something goes wrong after launch but before we're done, try and
     # save what data we have and turn on the buzzer / radio
     if mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        touchdown(None)
+        touchdown()
