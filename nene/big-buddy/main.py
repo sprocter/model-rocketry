@@ -1,7 +1,7 @@
-"""A script for a model rocket altimeter / accelerometer
+"""A script for a model rocket locator
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -36,7 +36,7 @@ def display_msg(payload):
         rssi_str = str(payload.rssi)
         if payload.header_flags == 0:
             alt_dbl = unpack(">d", payload.message)[0]
-            alt_str = f"{alt_dbl:.2f}"
+            alt_str = f"{alt_dbl:.3f}"
         if payload.header_flags == 1:
             coords = unpack(">HHBHHB", payload.message)
             lat_str = chr(coords[2]) + " " + f"{coords[0]:04}" + "." + f"{coords[1]:04}"
@@ -56,7 +56,7 @@ def display_msg(payload):
 
     line1 = f"Lat:{lat_str}"
     line2 = f"Lon:{lon_str}"
-    line3 = f"Alt:{alt_str:>10}ft"
+    line3 = f"Alt:{alt_str:>11}m"
     line4 = f"RSSI:{rssi_str:>9}dB"
     display_small_text(line1, line2, line3, line4)
 
@@ -165,7 +165,7 @@ button_C.irq(trigger=Pin.IRQ_FALLING, handler=handleC)
 
 lat_str = "  -- --.----"
 lon_str = " --- --.----"
-alt_str = "----.--"
+alt_str = "----.---"
 
 while True:
     if mode == MODE_INITIAL:
