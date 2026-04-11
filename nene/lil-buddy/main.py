@@ -126,15 +126,14 @@ def get_sensor_readings(timer: Timer) -> None:
             gps.read_raw()
             gps.clear_buffer()  # Clear the UART Rx buffer -- otherwise it seems to fill up. Not sure if we're subtly out of sync or what.
 
-    # TODO: Refactor this -- normal parameters / not a giant tuple. Extract sensor readings into their own method? Clean up generally.
-    process_reading((
+    process_reading(
         timestamp.to_bytes(3, "little"),
         alti.buffer,
         mag.buffer,
         accel.buffer,
         fresh_gps,
         gps.buffer,
-    ))
+    )
 
 
 def send_radio_message(timer: Timer) -> None:
@@ -175,18 +174,23 @@ def enable_radio() -> None:
 
 @micropython.native
 def process_reading(
-    reading: tuple[bytes, bytearray, bytearray, bytearray, bool, bytearray],
+    timestamp_param: bytes,
+    alti_buffer: bytearray,
+    mag_buffer: bytearray,
+    acc_buffer: bytearray,
+    fresh_gps: bool,
+    gps_buffer: bytearray,
 ) -> None:
-    global reading_num, gps_reading_count, ascent_altis, apogee
+    global reading_num, gps_reading_count, apogee
 
-    timestamp = int.from_bytes(reading[0], "little")
-    (raw_altitude, ambient_temp) = alti.decode_reading(reading[1])
+    timestamp = int.from_bytes(timestamp_param, "little")
+    (raw_altitude, ambient_temp) = alti.decode_reading(alti_buffer)
     barometric_altitude = raw_altitude - initial_altitude
-    mag_rdg = mag.decode_mag(reading[2])
+    mag_rdg = mag.decode_mag(mag_buffer)
     estimator.magnetometer = mag_rdg
-    acc_rdg = accel.decode_accel(reading[3])
+    acc_rdg = accel.decode_accel(acc_buffer)
     estimator.acceleration = acc_rdg
-    gyro_rdg = gyro.decode_gyro(reading[3])
+    gyro_rdg = gyro.decode_gyro(acc_buffer)
     estimator.gyroscope = gyro_rdg
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
     estimated_altitude = estimator.altitude  # Use the estimated altitude
@@ -198,8 +202,8 @@ def process_reading(
         if len(descent_altis) == 0 or timestamp - descent_altis[-1][0] >= 1000:
             descent_altis.append((timestamp, barometric_altitude))
     update_mode()
-    if reading[4]:
-        gps.decode_reading(reading[5])
+    if fresh_gps:
+        gps.decode_reading(gps_buffer)
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
             ">ffffffffffffffffffff",
@@ -256,7 +260,7 @@ def process_reading(
 
     # Garbage collect every third reading, unless we took a GPS reading this
     # period, in which case skip this garbage collection entirely
-    if gps_reading_count % 3 == 0 and not reading[4]:
+    if gps_reading_count % 3 == 0 and not fresh_gps:
         gc.collect()
     gps_reading_count += 1
 
