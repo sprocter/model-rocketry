@@ -15,9 +15,8 @@ from machine import PWM, Pin, I2C, Timer, RTC
 from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque
-from micropython import schedule, const
-from esp32 import mcu_temperature
-from math import sqrt
+from micropython import const
+from sys import print_exception
 
 from bmp581 import BMP581
 from adxl375 import ADXL375
@@ -688,8 +687,14 @@ try:
         time.sleep(5)
     while True:
         time.sleep(5)
-except Exception:
+except Exception as err:
     # If something goes wrong after launch but before we're done, try and
     # save what data we have and turn on the buzzer / radio
     if mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         touchdown()
+    # And then log the error (to a file or StdErr if we're testing)
+    if _RELEASE_LEVEL == _RELENG_RELEASE:
+        with open(f"error-log.txt", "at") as f:
+            print_exception(err, f)
+    else:
+        print_exception(err)
