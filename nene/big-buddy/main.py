@@ -99,9 +99,14 @@ def handleA(button_A):
     lora.on_recv = ignore_msgs
     lora.set_mode_idle()
     mode = MODE_BATTERY
+    voltage = charger.voltage
     charge = charger.charge_percent
     rate = charger.charge_rate
-    display_big_text(f"{charge:.1f}%", f"{rate:.1f}%/hr")
+    line1 = f"Voltage: {voltage:.2f}v"
+    line2 = f"SoC:    {charge:.2f}%"
+    line3 = f"Rate:   {rate:.1f}%/hr"
+    line4 = f" "
+    display_small_text(line1, line2, line3, line4)
 
 
 def handleB(button_B):
@@ -172,9 +177,14 @@ while True:
         display_big_text("Await", "Input")
         time.sleep(9)
     elif mode == MODE_BATTERY:
+        voltage = charger.voltage
         charge = charger.charge_percent
         rate = charger.charge_rate
-        display_big_text(f"{charge:.1f}%", f"{rate:.1f}%/hr")
+        line1 = f"Voltage: {voltage:.2f}v"
+        line2 = f"SoC:    {charge:.2f}%"
+        line3 = f"Rate:   {rate:.1f}%/hr"
+        line4 = f" "
+        display_small_text(line1, line2, line3, line4)
         time.sleep(9)
     elif mode == MODE_LORA:
         time.sleep(9)

@@ -1,7 +1,7 @@
 """A very (very!) simple driver for the MAX17048 Battery Monitor
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -16,6 +16,7 @@ from struct import unpack
 
 _MAX17048_ADDR = const(0x36)
 
+_MAX17048_VCELL = const(0x02)
 _MAX17048_SOC = const(0x04)
 _MAX17048_CRATE = const(0x16)
 
@@ -24,6 +25,11 @@ class MAX17048:
 
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
+
+    @property
+    def voltage(self) -> float:
+        voltage = self.i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_VCELL, 2)
+        return (unpack(">H", voltage)[0]) * 7.8125e-05
 
     @property
     def charge_percent(self) -> float:
