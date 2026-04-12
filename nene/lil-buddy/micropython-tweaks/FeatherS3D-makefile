@@ -1,0 +1,4 @@
+BOARD = NENE
+USER_C_MODULES ="$(realpath .)/nene.cmake"
+
+include Makefile
