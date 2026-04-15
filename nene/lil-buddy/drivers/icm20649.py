@@ -124,21 +124,6 @@ class ICM20649:
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ICM20649_ADDR, _REG_ACCEL_XOUT_H, self.buffer)
 
-    def decode_reading(
-        self, reading: bytearray
-    ) -> tuple[float, float, float, float, float, float, float]:
-        unpacked_reading = unpack(">hhhhhhh", reading)
-        # TODO: Rewrite to call others
-        return (
-            unpacked_reading[0] * _ACCEL_ADJUST - _ACC_X_ERR,
-            unpacked_reading[1] * _ACCEL_ADJUST - _ACC_Y_ERR,
-            unpacked_reading[2] * _ACCEL_ADJUST - _ACC_Z_ERR,
-            unpacked_reading[3] / _GYRO_SENSITIVITY - _GYRO_X_ERR,
-            unpacked_reading[4] / _GYRO_SENSITIVITY - _GYRO_Y_ERR,
-            unpacked_reading[5] / _GYRO_SENSITIVITY - _GYRO_Z_ERR,
-            (unpacked_reading[6] - _TEMP_OFFSET) / _TEMP_SENSITIVITY + 21,
-        )
-    
     @micropython.native
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack(">hhhhhhh", reading)
@@ -149,17 +134,18 @@ class ICM20649:
         )
 
     @micropython.native
-    def decode_gyro(self, reading:bytearray) -> tuple[float, float, float]:
+    def decode_gyro(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack(">hhhhhhh", reading)
         return (
             unpacked_reading[3] / _GYRO_SENSITIVITY - _GYRO_X_ERR,
             unpacked_reading[4] / _GYRO_SENSITIVITY - _GYRO_Y_ERR,
             unpacked_reading[5] / _GYRO_SENSITIVITY - _GYRO_Z_ERR,
         )
-    
-    def decode_temp(self, reading:bytearray) -> float:
+
+    @micropython.native
+    def decode_temp(self, reading: bytearray) -> float:
         unpacked_reading = unpack(">hhhhhhh", reading)
-        return (unpacked_reading[6] - _TEMP_OFFSET) / _TEMP_SENSITIVITY + 21,
+        return (unpacked_reading[6] - _TEMP_OFFSET) / _TEMP_SENSITIVITY + 21
 
     @property
     def error(self) -> float:
