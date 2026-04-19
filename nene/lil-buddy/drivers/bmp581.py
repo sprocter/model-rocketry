@@ -16,8 +16,6 @@ from struct import unpack
 from micropython import const
 import time
 
-_BMP581_ADDR = const(0x47)
-
 # Page and section numbers refer to the datasheet
 
 _BMP581_CHIPID = const(0x01)  # pg 51, 7.1
@@ -32,39 +30,36 @@ _EXPECTED_DEVICE_ID = const(80)  # pg 51, 7.1
 
 class BMP581:
 
+    ADDR = const(0x47)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(6)
-        self.addr = _BMP581_ADDR
-
     def initialize(self) -> None:
-        if _BMP581_ADDR not in self.i2c.scan():
-            raise OSError(f"BMP581 not found at {_BMP581_ADDR}")
+        if ADDR not in self.i2c.scan():
+            raise OSError(f"BMP581 not found at {ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(_BMP581_ADDR, _BMP581_CHIPID, 1)
+            "<B", self.i2c.readfrom_mem(ADDR, _BMP581_CHIPID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"BMP581 has incorrect device id {actual_device_id}")
 
         # disable deep standby, ODR = 45.025hz, "normal" mode.
         # 1 10000 01
-        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_ODR_CONFIG, b"\xC1")
+        self.i2c.writeto_mem(ADDR, _BMP581_ODR_CONFIG, b"\xC1")
         time.sleep_ms(10)
 
         # reserved, pressure iir = 2 / coeff 3, do not use temp iir filter
         # 00 010 000
-        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_DSP_IIR_CFG, b"\x10")
+        self.i2c.writeto_mem(ADDR, _BMP581_DSP_IIR_CFG, b"\x10")
 
         # Reserved, enable pressure readings, pressure osr = 32x, temp osr = 2x
         # 0 1 101 001
-        self.i2c.writeto_mem(_BMP581_ADDR, _BMP581_OSR_CONFIG, b"\x69")
+        self.i2c.writeto_mem(ADDR, _BMP581_OSR_CONFIG, b"\x69")
         time.sleep_ms(10)
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(_BMP581_ADDR, _BMP581_TEMP_XLSB, self.buffer)
-
-    def decode_reading(self, reading: bytearray) -> tuple[float, float]:
-        return (self.decode_alti(reading), self.decode_temp(reading))
+        self.i2c.readfrom_mem_into(ADDR, _BMP581_TEMP_XLSB, self.buffer)
 
     @micropython.native
     def decode_alti(self, reading: bytearray) -> float:

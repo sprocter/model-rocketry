@@ -1,7 +1,7 @@
 """A very simple driver for the ADXL375 High-G Accelerometer
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -15,8 +15,6 @@ from machine import I2C
 from struct import unpack
 from micropython import const
 import time
-
-ADXL375_ADDR = const(0x53)
 
 _ADXL375_DEVID = const(0x00)
 _ADXL375_BW_RATE = const(0x2C)
@@ -32,28 +30,29 @@ _EXPECTED_DEVICE_ID = const(0xE5)  # Datasheet pg 21
 
 class ADXL375:
 
+    ADDR = const(0x53)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(6)
-        self.addr = ADXL375_ADDR
 
     def initialize(self) -> None:
-        if ADXL375_ADDR not in self.i2c.scan():
-            raise OSError(f"ADXL375 not found at {ADXL375_ADDR}")
+        if ADDR not in self.i2c.scan():
+            raise OSError(f"ADXL375 not found at {ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ADXL375_ADDR, _ADXL375_DEVID, 1)
+            "<B", self.i2c.readfrom_mem(ADDR, _ADXL375_DEVID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
 
-        self.i2c.writeto_mem(ADXL375_ADDR, _ADXL375_POWER_CTL, b"\x08")
-        self.i2c.writeto_mem(ADXL375_ADDR, _ADXL375_BW_RATE, b"\x08")
+        self.i2c.writeto_mem(ADDR, _ADXL375_POWER_CTL, b"\x08")
+        self.i2c.writeto_mem(ADDR, _ADXL375_BW_RATE, b"\x08")
         time.sleep_ms(10)
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(ADXL375_ADDR, _ADXL375_DATAX0, self.buffer)
+        self.i2c.readfrom_mem_into(ADDR, _ADXL375_DATAX0, self.buffer)
 
-    def decode_reading(self, reading: bytearray) -> tuple[float, float, float]:
+    def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
         return (
             unpacked_reading[0] * _SCALE_FACTOR - _X_ERR,

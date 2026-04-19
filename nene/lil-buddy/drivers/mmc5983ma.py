@@ -15,8 +15,6 @@ from machine import I2C
 from struct import unpack
 import time
 
-_MMC5983MA_ADDR = const(0x30)
-
 # Page and section numbers refer to the datasheet
 
 _MMC5983MA_CHIPID = const(0x2F)  # pg 16, Product ID1
@@ -43,11 +41,12 @@ _MICROTESLA_SCALE_FACTOR = const(163.84)
 
 class MMC5983MA:
 
+    ADDR = const(0x30)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         # Mag values are three 18 bit floats split across 7 bytes 😑
-        self.buffer = bytearray(7)  
-        self.addr = _MMC5983MA_ADDR
+        self.buffer = bytearray(7)
 
         # "Local" offsets, set automatically during initialization using the chip's SET and RESET functionality
         self._x_offset = 0
@@ -61,22 +60,22 @@ class MMC5983MA:
         """
         # "Set" operation
         # 0 0 0 0 1 0 0 0
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x08")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL0, b"\x08")
         time.sleep_us(1)  # Datasheet says 500ns, we'll give a little extra
 
         # Trigger reading
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
         (x1, y1, z1) = self._decode_mag_internal(self.buffer)
 
         # "Reset" operation
         # 0 0 0 1 0 0 0 0
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x10")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL0, b"\x10")
         time.sleep_us(1)  # Datasheet says 500ns, we'll give a little extra
 
         # Trigger reading
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x01")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL0, b"\x01")
         time.sleep_ms(10)
         self.read_raw()
         (x2, y2, z2) = self._decode_mag_internal(self.buffer)
@@ -86,17 +85,17 @@ class MMC5983MA:
         self._z_offset = (z1 + z2) / 2
 
     def initialize(self) -> None:
-        if _MMC5983MA_ADDR not in self.i2c.scan():
-            raise OSError(f"MMC5983MA not found at {_MMC5983MA_ADDR}")
+        if ADDR not in self.i2c.scan():
+            raise OSError(f"MMC5983MA not found at {ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(_MMC5983MA_ADDR, _MMC5983MA_CHIPID, 1)
+            "<B", self.i2c.readfrom_mem(ADDR, _MMC5983MA_CHIPID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"MMC5983MA has incorrect device id {actual_device_id}")
 
         # Reset the chip, take measurements for 8ms (100Hz B/W)
         # 1 00 00 0 0 0
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL1, b"\x80")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL1, b"\x80")
         # Datasheet says power on time is 10ms, we'll give a little extra
         time.sleep_ms(20)
 
@@ -107,17 +106,17 @@ class MMC5983MA:
         # This is a neat feature but it 1) flips the signs from what I get from
         # a reference implementation and 2) requires re-establishing the
         # offsets. So I don't know how to use it in my time-constrained setup
-        # self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL0, b"\x20")
+        # self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL0, b"\x20")
 
         # Enable periodic settings, set every time*, enable continuous mode, Continuous frequency = 50hz
         # * Since we're not using auto set / reset, I don't believe this affects anything.
         # 1 000 1 100
-        self.i2c.writeto_mem(_MMC5983MA_ADDR, _MMC5983MA_CTRL2, b"\x8c")
+        self.i2c.writeto_mem(ADDR, _MMC5983MA_CTRL2, b"\x8c")
 
         time.sleep_ms(10)  # Block until first reading can be taken, they take 8ms
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(_MMC5983MA_ADDR, _MMC5983MA_XOUT0, self.buffer)
+        self.i2c.readfrom_mem_into(ADDR, _MMC5983MA_XOUT0, self.buffer)
 
     @micropython.native
     def _decode_mag_internal(self, reading: bytearray) -> tuple[float, float, float]:

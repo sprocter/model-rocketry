@@ -1,7 +1,7 @@
 """A very simple driver for the ICM20649 Accelerometer and Gyroscope
 
 --------------------------------------------------------------------------------
-Copyright (C) 2025 Sam Procter
+Copyright (C) 2025-2026 Sam Procter
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -15,8 +15,6 @@ from machine import I2C
 from struct import unpack
 import time
 
-
-ICM20649_ADDR = const(0x68)
 G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
 
 # Page and section numbers refer to the datasheet
@@ -56,22 +54,23 @@ _TEMP_OFFSET = const(0)  # pg 15, 3.3.2
 
 class ICM20649:
 
+    ADDR = const(0x68)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(14)
-        self.addr = ICM20649_ADDR
-
+        
     def initialize(self) -> None:
-        if ICM20649_ADDR not in self.i2c.scan():
-            raise OSError(f"ICM20649 not found at {ICM20649_ADDR}")
+        if ADDR not in self.i2c.scan():
+            raise OSError(f"ICM20649 not found at {ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ICM20649_ADDR, _REG_CHIPID, 1)
+            "<B", self.i2c.readfrom_mem(ADDR, _REG_CHIPID, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ICM20649 has incorrect device id {actual_device_id}")
 
         # Reset the device
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_PWR_MGMT_1, b"\x80")
+        self.i2c.writeto_mem(ADDR, _REG_PWR_MGMT_1, b"\x80")
 
         time.sleep_ms(5)  # Give the device time to do its reset
 
@@ -79,50 +78,50 @@ class ICM20649:
         # Write 0 to reserve (😰), enable temperature sensor,
         # auto select best clock source
         # 0 0 0 0 001
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_PWR_MGMT_1, b"\x01")
+        self.i2c.writeto_mem(ADDR, _REG_PWR_MGMT_1, b"\x01")
 
         # Write 00 to reserved spot, enable accelerometer, enable gyro
         # 00 000 000
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_PWR_MGMT_2, b"\x00")
+        self.i2c.writeto_mem(ADDR, _REG_PWR_MGMT_2, b"\x00")
 
         time.sleep_ms(50)  # Allow gyro and accelerometer to wake up
 
         # Switch to bank 2
         # Bits 7, 6, 3, 2, 1 and 0 are reserved
         # 00 10 0000
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_BANK_SEL, b"\x20")
+        self.i2c.writeto_mem(ADDR, _REG_BANK_SEL, b"\x20")
 
         # Sample rate = 1.1kHz/(1+ X), X = 24, ODR = 45.8333Hz
         # 00011000
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_GYRO_SMPLRT_DIV, b"\x18")
+        self.i2c.writeto_mem(ADDR, _REG_GYRO_SMPLRT_DIV, b"\x18")
 
         # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
         # Gyroscope is in full scale, enable gyro DLPF
         # 00 011 11 1
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
+        self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
 
         # Sample rate = 1.1kHz/(1+X), X = 24, ODR = 45.8333Hz
         # 00011000
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_ACCEL_SMPLRT_DIV_2, b"\x18")
+        self.i2c.writeto_mem(ADDR, _REG_ACCEL_SMPLRT_DIV_2, b"\x18")
 
         # Bits 7 and 6 are reserved, accel DLPF is set to 3 (? I don't get this)
         # Accelerometer is in full scale, enable accel DLPF
         # 00 011 11 1
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_ACCEL_CONFIG, b"\x1f")
+        self.i2c.writeto_mem(ADDR, _REG_ACCEL_CONFIG, b"\x1f")
 
         # Does a temperature sensor need a low pass filter? This seems weird
         # 00000 011
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_TEMP_CONFIG, b"\x03")
+        self.i2c.writeto_mem(ADDR, _REG_TEMP_CONFIG, b"\x03")
 
         # Back to bank 0
         # Bits 7, 6, 3, 2, 1 and 0 are reserved
         # 00 00 0000
-        self.i2c.writeto_mem(ICM20649_ADDR, _REG_BANK_SEL, b"\x00")
+        self.i2c.writeto_mem(ADDR, _REG_BANK_SEL, b"\x00")
 
         time.sleep_ms(50)  # Let the low-pass filters "warm up"
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(ICM20649_ADDR, _REG_ACCEL_XOUT_H, self.buffer)
+        self.i2c.readfrom_mem_into(ADDR, _REG_ACCEL_XOUT_H, self.buffer)
 
     @micropython.native
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:

@@ -14,8 +14,6 @@ You should have received a copy of the GNU General Public License along with thi
 from machine import I2C
 from struct import unpack
 
-_MAX17048_ADDR = const(0x36)
-
 _MAX17048_VCELL = const(0x02)
 _MAX17048_SOC = const(0x04)
 _MAX17048_CRATE = const(0x16)
@@ -23,20 +21,22 @@ _MAX17048_CRATE = const(0x16)
 
 class MAX17048:
 
+    ADDR = const(0x36)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
 
     @property
     def voltage(self) -> float:
-        voltage = self.i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_VCELL, 2)
+        voltage = self.i2c.readfrom_mem(ADDR, _MAX17048_VCELL, 2)
         return (unpack(">H", voltage)[0]) * 7.8125e-05
 
     @property
     def charge_percent(self) -> float:
-        soc = self.i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_SOC, 2)
+        soc = self.i2c.readfrom_mem(ADDR, _MAX17048_SOC, 2)
         return (unpack(">H", soc)[0]) / 256.0
 
     @property
     def charge_rate(self) -> float:
-        rate = self.i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_CRATE, 2)
+        rate = self.i2c.readfrom_mem(ADDR, _MAX17048_CRATE, 2)
         return (unpack(">h", rate)[0]) * 0.208

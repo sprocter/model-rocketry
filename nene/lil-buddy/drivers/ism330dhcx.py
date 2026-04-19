@@ -15,8 +15,6 @@ from machine import I2C
 from struct import unpack
 import time
 
-ISM330DHCX_ADDR = const(0x6B)
-
 _REG_WHO_AM_I = const(0x0F)  # Datasheet pg 48
 _REG_CTRL1_XL = const(0x10)  # Datasheet pg 49
 _REG_CTRL2_G = const(0x11)  # Datasheet pg 50
@@ -42,47 +40,48 @@ _ACCEL_ADJUST = const(0.000488 * _G_TO_MS2)  # Datasheet pg 10 #
 
 class ISM330DHCX:
 
+    ADDR = const(0x6B)
+
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
         self.buffer = bytearray(14)
-        self.addr = ISM330DHCX_ADDR
 
     def initialize(self) -> None:
-        if ISM330DHCX_ADDR not in self.i2c.scan():
-            raise OSError(f"ISM330DHCX not found at {ISM330DHCX_ADDR}")
+        if ADDR not in self.i2c.scan():
+            raise OSError(f"ISM330DHCX not found at {ADDR}")
         actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ISM330DHCX_ADDR, _REG_WHO_AM_I, 1)
+            "<B", self.i2c.readfrom_mem(ADDR, _REG_WHO_AM_I, 1)
         )[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ISM330DHCX has incorrect device id {actual_device_id}")
 
         # Reset the device using CTRL3_C
         # 0 0 0 0 0 0 0 1
-        self.i2c.writeto_mem(ISM330DHCX_ADDR, _REG_CTRL3_C, b"\x01")
+        self.i2c.writeto_mem(ADDR, _REG_CTRL3_C, b"\x01")
         time.sleep_ms(100)  # Give the device time to do its reset
 
         # Enable "proper device configuration" 🤨 using CTRL9_XL
         # 1 1 1 0 0 0 1 0
-        self.i2c.writeto_mem(ISM330DHCX_ADDR, _REG_CTRL9_XL, b"\xe2")
+        self.i2c.writeto_mem(ADDR, _REG_CTRL9_XL, b"\xe2")
 
         # Enable "Block Data Update" so we don't read partially-updated data
         # 0 0 0 0 0 1 0 0
-        self.i2c.writeto_mem(ISM330DHCX_ADDR, _REG_CTRL3_C, b"\x04")
+        self.i2c.writeto_mem(ADDR, _REG_CTRL3_C, b"\x04")
 
         # Configure accelerometer using CTRL1_XL:
         #   1. ODR to 52Hz 0011
         #   2. Full-scale to 16g 01
         # 0 0
-        self.i2c.writeto_mem(ISM330DHCX_ADDR, _REG_CTRL1_XL, b"\x34")
+        self.i2c.writeto_mem(ADDR, _REG_CTRL1_XL, b"\x34")
 
         # Configure gyroscope using CTRL2_G:
         #   1. ODR to 52 Hz 0011
         #   2. Fullscale to 4000dps 0001
-        self.i2c.writeto_mem(ISM330DHCX_ADDR, _REG_CTRL2_G, b"\x31")
+        self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x31")
         time.sleep_ms(100)  # Allow everything to wake up
 
     def read_raw(self) -> None:
-        self.i2c.readfrom_mem_into(ISM330DHCX_ADDR, _REG_OUT_TEMP_L, self.buffer)
+        self.i2c.readfrom_mem_into(ADDR, _REG_OUT_TEMP_L, self.buffer)
 
     @micropython.native
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:

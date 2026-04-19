@@ -21,6 +21,7 @@ from sys import print_exception
 from bmp581 import BMP581
 from adxl375 import ADXL375
 from icm20649 import ICM20649
+from ism330dhcx import ISM330DHCX
 from mmc5983ma import MMC5983MA
 from max17048 import MAX17048
 from pa1010 import PA1010
@@ -28,7 +29,6 @@ from sx1262 import SX1262
 from marg import StateEstimator
 
 import time, gc, json, vfs, machine, network, uftpd, os, deflate
-import adxl375, icm20649
 import hidden_buffer as buff
 
 
@@ -115,6 +115,8 @@ def get_sensor_readings(timer: Timer) -> None:
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
+    if accel != gyro:
+        gyro.read_raw()
     mag.read_raw()
 
     fresh_gps = False
@@ -131,6 +133,7 @@ def get_sensor_readings(timer: Timer) -> None:
         alti.buffer,
         mag.buffer,
         accel.buffer,
+        gyro.buffer,
         fresh_gps,
         gps.buffer,
     )
@@ -178,22 +181,30 @@ def process_reading(
     alti_buffer: bytearray,
     mag_buffer: bytearray,
     acc_buffer: bytearray,
+    gyro_buffer: bytearray,
     fresh_gps: bool,
     gps_buffer: bytearray,
 ) -> None:
     global reading_num, gps_reading_count, apogee
 
     timestamp = int.from_bytes(timestamp_param, "little")
-    (raw_altitude, ambient_temp) = alti.decode_reading(alti_buffer)
+    raw_altitude = alti.decode_alti(alti_buffer)
+    ambient_temp = alti.decode_temp(alti_buffer)
     barometric_altitude = raw_altitude - initial_altitude
+
     mag_rdg = mag.decode_mag(mag_buffer)
     estimator.magnetometer = mag_rdg
+    
     acc_rdg = accel.decode_accel(acc_buffer)
     estimator.acceleration = acc_rdg
-    gyro_rdg = gyro.decode_gyro(acc_buffer)
+    
+    gyro_rdg = gyro.decode_gyro(gyro_buffer)
     estimator.gyroscope = gyro_rdg
+    
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
+    
     estimated_altitude = estimator.altitude  # Use the estimated altitude
+    
     if mode == _MODE_ASCENT and barometric_altitude > apogee:
         apogee = barometric_altitude
     if mode == _MODE_LAUNCHPAD or mode == _MODE_ASCENT:
@@ -290,8 +301,8 @@ def started_descent() -> bool:
 def touched_down() -> bool:
     if len(descent_altis) < 5:
         return False
-    min_alt = descent_altis[-1][1] - 0.05  # 5cm
-    max_alt = descent_altis[-1][1] + 0.05
+    min_alt = descent_altis[-1][1] - 0.1  # 10cm
+    max_alt = descent_altis[-1][1] + 0.1
     for _, alti in descent_altis:
         if alti < min_alt or alti > max_alt:
             return False
@@ -405,24 +416,57 @@ def _init_devices() -> None:
     i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
 
-    alti = BMP581(i2c)
-    mag = MMC5983MA(i2c)
+    if BMP581.ADDR in connected_devices:
+        alti = BMP581(i2c)
+    else:
+        raise OSError(f"No altimeter connected!")
+
+    if MMC5983MA.ADDR in connected_devices:
+        mag = MMC5983MA(i2c)
+    else:
+        raise OSError(f"No magnetometer connected!")
+    
     gps = PA1010(16, 15)
 
-    if adxl375.ADXL375_ADDR in connected_devices:
-        accel = ADXL375(i2c)  # Use the ADXL if we have multiple accelerometers
-    elif icm20649.ICM20649_ADDR in connected_devices:
+    # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g, 
+    # and ISM330DHCX ±16
+    if ADXL375.ADDR in connected_devices:
+        print("Using ADXL375 for accelerometer.")
+        accel = ADXL375(i2c)
+    elif ICM20649.ADDR in connected_devices:
+        print("Using ICM20649 for accelerometer.")
         accel = ICM20649(i2c)
+    elif ISM330DHCX.ADDR in connected_devices:
+        print("Using ISM330DHCX for accelerometer.")
+        accel = ISM330DHCX(i2c)
+    else:
+        raise OSError(f"No accelerometer connected!")
 
-    if icm20649.ICM20649_ADDR in connected_devices:
-        if isinstance(accel, ICM20649):
-            gyro = accel  # Share object rather than re-create it
+    # Both ISM330DHCX and ICM20649 have the same range, but the ISM330DHCX is 
+    # more accurate, so we prefer it. We also alias the object if we are using 
+    # the same device for the accelerometer and gyroscope.
+    if ISM330DHCX.ADDR in connected_devices:
+        if isinstance(accel, ISM330DHCX):
+            print("Re-using ISM330DHCX for gyroscope.")
+            gyro = accel
         else:
+            print("Instantiating ISM330DHCX for gyroscope.")
+            gyro = ISM330DHCX(i2c)
+    elif ICM20649.ADDR in connected_devices:
+        if isinstance(accel, ICM20649):
+            print("Re-using ICM20649 for gyroscope.")
+            gyro = accel
+        else:
+            print("Instantiating ICM20649 for gyroscope.")
             gyro = ICM20649(i2c)
+    else:
+        raise OSError(f"No gyroscope connected!")
 
     alti.initialize()
     mag.initialize()
     accel.initialize()
+    if accel != gyro:
+        gyro.initialize()
     gps.initialize()
 
     radio = _init_radio()
