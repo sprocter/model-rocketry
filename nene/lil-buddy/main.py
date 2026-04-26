@@ -43,7 +43,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+_RELEASE_LEVEL = const(_RELENG_RELEASE)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -115,6 +115,9 @@ def get_sensor_readings(timer: Timer) -> None:
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
+    # Devices burst read all their values into one buffer -- we only decode 
+    # what we need. So, if the accel and gyro are aliased, we should not 
+    # trigger a second read.
     if accel != gyro:
         gyro.read_raw()
     mag.read_raw()
@@ -431,13 +434,10 @@ def _init_devices() -> None:
     # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g, 
     # and ISM330DHCX ±16
     if ADXL375.ADDR in connected_devices:
-        print("Using ADXL375 for accelerometer.")
         accel = ADXL375(i2c)
     elif ICM20649.ADDR in connected_devices:
-        print("Using ICM20649 for accelerometer.")
         accel = ICM20649(i2c)
     elif ISM330DHCX.ADDR in connected_devices:
-        print("Using ISM330DHCX for accelerometer.")
         accel = ISM330DHCX(i2c)
     else:
         raise OSError(f"No accelerometer connected!")
@@ -447,17 +447,13 @@ def _init_devices() -> None:
     # the same device for the accelerometer and gyroscope.
     if ISM330DHCX.ADDR in connected_devices:
         if isinstance(accel, ISM330DHCX):
-            print("Re-using ISM330DHCX for gyroscope.")
             gyro = accel
         else:
-            print("Instantiating ISM330DHCX for gyroscope.")
             gyro = ISM330DHCX(i2c)
     elif ICM20649.ADDR in connected_devices:
         if isinstance(accel, ICM20649):
-            print("Re-using ICM20649 for gyroscope.")
             gyro = accel
         else:
-            print("Instantiating ICM20649 for gyroscope.")
             gyro = ICM20649(i2c)
     else:
         raise OSError(f"No gyroscope connected!")
@@ -561,7 +557,7 @@ def initialize():
             (
                 2026,  # Hardcoded dates since we don't get
                 4,  # date info from the GPS
-                19,
+                26,
                 gps.hour - 4,  # Timezones, oy
                 gps.minute,
                 gps.second,
