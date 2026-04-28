@@ -28,7 +28,7 @@ from pa1010 import PA1010
 from sx1262 import SX1262
 from marg import StateEstimator
 
-import time, gc, json, vfs, machine, network, uftpd, os, deflate
+import time, gc, json, vfs, machine, network, uftpd, os, deflate, esp32
 import hidden_buffer as buff
 
 
@@ -43,7 +43,7 @@ _MODE_WIFI = const(6)
 _RELENG_DEVELOP = const(0)
 _RELENG_TEST = const(1)
 _RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_RELEASE)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -504,7 +504,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp
 
     mode = _MODE_INITIALIZE
 
@@ -513,10 +513,14 @@ def initialize():
 
     _init_board()
 
+    initial_mcu_temp = esp32.mcu_temperature()
+
     with open("/secrets.json", "r") as f:
         secrets = json.loads(f.read())
 
     _init_devices()
+
+    initial_batt_soc = batt_monitor.charge_percent
 
     estimator = StateEstimator(_PERIOD, alti.error, accel.error)
 
@@ -531,7 +535,8 @@ def initialize():
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     ascent_altis = deque([], _RECENT_READINGS)
     descent_altis = deque([], _RECENT_READINGS)
-    while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
+    while (time.ticks_diff(time.ticks_ms(), init_time) < 3) and (
+    #while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
         gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
     ):
         if npxl_on:
@@ -569,8 +574,6 @@ def initialize():
     else:
         initial_gps_altitude = 0
         _GPS_CONNECTED = False
-
-    initial_batt_soc = batt_monitor.charge_percent
 
     gc.collect()
     gps.clear_buffer()
@@ -613,6 +616,9 @@ def _write_data() -> None:
     batt_hdr_str = (
         f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
     )
+    mcu_hdr_str = (
+        f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
+    )
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -625,7 +631,7 @@ def _write_data() -> None:
         )
     else:
         date_hdr_str = "No Date"
-    header_str = f"{date_hdr_str},{batt_hdr_str},\n{label_hdr_str}\n"
+    header_str = f"{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
 
     if _RELEASE_LEVEL == _RELENG_RELEASE:
         # Expect filenames of the form 'launch-XXXX.csv'
