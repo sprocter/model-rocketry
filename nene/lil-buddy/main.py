@@ -485,9 +485,6 @@ def _init_board():
     neopixel = NeoPixel(neopixel_pin, 1)
     _update_neopixel()
 
-    # Overclock the CPU
-    machine.freq(240_000_000)
-
     # Initialize timers
     sensor_reading_timer = Timer(0)  # Controls reading from sensors
     radio_timer = Timer(1)  # Controls radio broadcasts
