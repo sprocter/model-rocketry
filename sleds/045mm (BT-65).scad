@@ -110,15 +110,15 @@ module extended_board () {
                         }
             }
             // Add a hole for the battery plug to go through
-            translate([21.2, 98, -1*BOARD_DEPTH]){
+            /*translate([21.2, 98, -1*BOARD_DEPTH]){
                 cube([7.5,7.5,BOARD_DEPTH*2]);
-            }
+            }*/
     }
     
     // Block some swirly elements that are close to where we need to have a velcro strap
-    translate([35.85, 97.8, -.5*BOARD_DEPTH]){
+    /*translate([35.85, 97.8, -.5*BOARD_DEPTH]){
         cube([3,10,BOARD_DEPTH]);
-    }
+    }*/
 }
 
 module structural_beam(){
@@ -156,7 +156,7 @@ module wing_block() {
 difference() {
     extended_board();
     // Add a "dash" so the velcro strap fits nicely
-    translate([35, 104, -.5*BOARD_DEPTH]){
+    /*translate([35, 104, -.5*BOARD_DEPTH]){
         dash();
-    }
+    }*/
 }
