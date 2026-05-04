@@ -24,12 +24,12 @@ _REG_OUT_TEMP_L = const(0x20)  # Datasheet pg 64
 
 _EXPECTED_DEVICE_ID = const(0x6B)  # Datasheet pg 48
 
-_ACC_X_ERR = const(-0.058289064)
-_ACC_Y_ERR = const(0.06798006)
-_ACC_Z_ERR = const(0.1574564)
-_GYRO_X_ERR = const(-0.3548993)
-_GYRO_Y_ERR = const(-0.61809904)
-_GYRO_Z_ERR = const(0.13999982)
+# _ACC_X_ERR = const(-0.058289064)
+# _ACC_Y_ERR = const(0.06798006)
+# _ACC_Z_ERR = const(0.1574564)
+# _GYRO_X_ERR = const(-0.3548993)
+# _GYRO_Y_ERR = const(-0.61809904)
+# _GYRO_Z_ERR = const(0.13999982)
 
 _G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
 _TEMP_ADJUST = const(256)  # Datasheet page 13
@@ -44,14 +44,20 @@ class ISM330DHCX:
 
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
+        self.acc_x_err = 0.0
+        self.acc_y_err = 0.0
+        self.acc_z_err = 0.0
+        self.gyro_x_err = 0.0
+        self.gyro_y_err = 0.0
+        self.gyro_z_err = 0.0
         self.buffer = bytearray(14)
 
-    def initialize(self) -> None:
+    def initialize(self, offsets: dict) -> None:
         if ADDR not in self.i2c.scan():
             raise OSError(f"ISM330DHCX not found at {ADDR}")
-        actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ADDR, _REG_WHO_AM_I, 1)
-        )[0]
+        actual_device_id = unpack("<B", self.i2c.readfrom_mem(ADDR, _REG_WHO_AM_I, 1))[
+            0
+        ]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ISM330DHCX has incorrect device id {actual_device_id}")
 
@@ -80,6 +86,13 @@ class ISM330DHCX:
         self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x31")
         time.sleep_ms(100)  # Allow everything to wake up
 
+        self.acc_x_err = offsets["ACC_X_ERR"]
+        self.acc_y_err = offsets["ACC_Y_ERR"]
+        self.acc_z_err = offsets["ACC_Z_ERR"]
+        self.gyro_x_err = offsets["GYRO_X_ERR"]
+        self.gyro_y_err = offsets["GYRO_Y_ERR"]
+        self.gyro_z_err = offsets["GYRO_Z_ERR"]
+
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ADDR, _REG_OUT_TEMP_L, self.buffer)
 
@@ -87,18 +100,18 @@ class ISM330DHCX:
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhhhhhh", reading)
         return (
-            unpacked_reading[4] * _ACCEL_ADJUST - _ACC_X_ERR,
-            unpacked_reading[5] * _ACCEL_ADJUST - _ACC_Y_ERR,
-            unpacked_reading[6] * _ACCEL_ADJUST - _ACC_Z_ERR,
+            unpacked_reading[4] * _ACCEL_ADJUST - self.acc_x_err,
+            unpacked_reading[5] * _ACCEL_ADJUST - self.acc_y_err,
+            unpacked_reading[6] * _ACCEL_ADJUST - self.acc_z_err,
         )
 
     @micropython.native
     def decode_gyro(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhhhhhh", reading)
         return (
-            unpacked_reading[1] * _GYRO_ADJUST - _GYRO_X_ERR,
-            unpacked_reading[2] * _GYRO_ADJUST - _GYRO_Y_ERR,
-            unpacked_reading[3] * _GYRO_ADJUST - _GYRO_Z_ERR,
+            unpacked_reading[1] * _GYRO_ADJUST - self.gyro_x_err,
+            unpacked_reading[2] * _GYRO_ADJUST - self.gyro_y_err,
+            unpacked_reading[3] * _GYRO_ADJUST - self.gyro_z_err,
         )
 
     @micropython.native

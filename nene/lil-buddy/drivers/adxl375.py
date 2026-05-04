@@ -22,9 +22,9 @@ _ADXL375_POWER_CTL = const(0x2D)
 _ADXL375_DATAX0 = const(0x32)
 
 _SCALE_FACTOR = const(0.049)  # Datasheet pg 3, Tbl 1
-_X_ERR = const(0.0793798)  # From print_accel_offsets() in utilities.py
-_Y_ERR = const(-0.2010956)  # From print_accel_offsets() in utilities.py
-_Z_ERR = const(-0.5096079)  # From print_accel_offsets() in utilities.py
+# _X_ERR = const(0.0793798)  # From print_accel_offsets() in utilities.py
+# _Y_ERR = const(-0.2010956)  # From print_accel_offsets() in utilities.py
+# _Z_ERR = const(-0.5096079)  # From print_accel_offsets() in utilities.py
 _EXPECTED_DEVICE_ID = const(0xE5)  # Datasheet pg 21
 
 
@@ -33,15 +33,18 @@ class ADXL375:
     ADDR = const(0x53)
 
     def __init__(self, i2c: I2C) -> None:
-        self.i2c = i2c
+        self.i2c = i2c        
+        self.x_err = 0.0
+        self.y_err = 0.0
+        self.z_err = 0.0
         self.buffer = bytearray(6)
 
-    def initialize(self) -> None:
+    def initialize(self, offsets: dict) -> None:
         if ADDR not in self.i2c.scan():
             raise OSError(f"ADXL375 not found at {ADDR}")
-        actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ADDR, _ADXL375_DEVID, 1)
-        )[0]
+        actual_device_id = unpack("<B", self.i2c.readfrom_mem(ADDR, _ADXL375_DEVID, 1))[
+            0
+        ]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
 
@@ -49,13 +52,17 @@ class ADXL375:
         self.i2c.writeto_mem(ADDR, _ADXL375_BW_RATE, b"\x08")
         time.sleep_ms(10)
 
+        self.x_err = offsets["ACC_X_ERR"]
+        self.y_err = offsets["ACC_Y_ERR"]
+        self.z_err = offsets["ACC_Z_ERR"]
+
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ADDR, _ADXL375_DATAX0, self.buffer)
 
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
         return (
-            unpacked_reading[0] * _SCALE_FACTOR - _X_ERR,
-            unpacked_reading[1] * _SCALE_FACTOR - _Y_ERR,
-            unpacked_reading[2] * _SCALE_FACTOR - _Z_ERR,
+            unpacked_reading[0] * _SCALE_FACTOR - self.x_err,
+            unpacked_reading[1] * _SCALE_FACTOR - self.y_err,
+            unpacked_reading[2] * _SCALE_FACTOR - self.z_err,
         )

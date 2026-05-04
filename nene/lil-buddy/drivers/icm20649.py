@@ -38,12 +38,12 @@ _EXPECTED_DEVICE_ID = const(0xE1)  # pg 38, 8.1.1
 _GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
 _ACCEL_SENSITIVITY = const(1024)  # pg 13, 3.2
 
-_ACC_X_ERR = const(0.10822296)
-_ACC_Y_ERR = const(-0.21025884)
-_ACC_Z_ERR = const(0.58796824)
-_GYRO_X_ERR = const(-0.58353684)
-_GYRO_Y_ERR = const(1.4780478)
-_GYRO_Z_ERR = const(-0.4469513)
+# _ACC_X_ERR = const(0.10822296)
+# _ACC_Y_ERR = const(-0.21025884)
+# _ACC_Z_ERR = const(0.58796824)
+# _GYRO_X_ERR = const(-0.58353684)
+# _GYRO_Y_ERR = const(1.4780478)
+# _GYRO_Z_ERR = const(-0.4469513)
 
 
 _ACCEL_ADJUST = const(G_TO_MS2 / _ACCEL_SENSITIVITY)
@@ -58,14 +58,18 @@ class ICM20649:
 
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
+        self.acc_x_err = 0.0
+        self.acc_y_err = 0.0
+        self.acc_z_err = 0.0
+        self.gyro_x_err = 0.0
+        self.gyro_y_err = 0.0
+        self.gyro_z_err = 0.0
         self.buffer = bytearray(14)
-        
-    def initialize(self) -> None:
+
+    def initialize(self, offsets: dict) -> None:
         if ADDR not in self.i2c.scan():
             raise OSError(f"ICM20649 not found at {ADDR}")
-        actual_device_id = unpack(
-            "<B", self.i2c.readfrom_mem(ADDR, _REG_CHIPID, 1)
-        )[0]
+        actual_device_id = unpack("<B", self.i2c.readfrom_mem(ADDR, _REG_CHIPID, 1))[0]
         if actual_device_id != _EXPECTED_DEVICE_ID:
             raise OSError(f"ICM20649 has incorrect device id {actual_device_id}")
 
@@ -120,6 +124,13 @@ class ICM20649:
 
         time.sleep_ms(50)  # Let the low-pass filters "warm up"
 
+        self.acc_x_err = offsets["ACC_X_ERR"]
+        self.acc_y_err = offsets["ACC_Y_ERR"]
+        self.acc_z_err = offsets["ACC_Z_ERR"]
+        self.gyro_x_err = offsets["GYRO_X_ERR"]
+        self.gyro_y_err = offsets["GYRO_Y_ERR"]
+        self.gyro_z_err = offsets["GYRO_Z_ERR"]
+
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ADDR, _REG_ACCEL_XOUT_H, self.buffer)
 
@@ -127,18 +138,18 @@ class ICM20649:
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack(">hhhhhhh", reading)
         return (
-            unpacked_reading[0] * _ACCEL_ADJUST - _ACC_X_ERR,
-            unpacked_reading[1] * _ACCEL_ADJUST - _ACC_Y_ERR,
-            unpacked_reading[2] * _ACCEL_ADJUST - _ACC_Z_ERR,
+            unpacked_reading[0] * _ACCEL_ADJUST - self.acc_x_err,
+            unpacked_reading[1] * _ACCEL_ADJUST - self.acc_y_err,
+            unpacked_reading[2] * _ACCEL_ADJUST - self.acc_z_err,
         )
 
     @micropython.native
     def decode_gyro(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack(">hhhhhhh", reading)
         return (
-            unpacked_reading[3] / _GYRO_SENSITIVITY - _GYRO_X_ERR,
-            unpacked_reading[4] / _GYRO_SENSITIVITY - _GYRO_Y_ERR,
-            unpacked_reading[5] / _GYRO_SENSITIVITY - _GYRO_Z_ERR,
+            unpacked_reading[3] / _GYRO_SENSITIVITY - self.gyro_x_err,
+            unpacked_reading[4] / _GYRO_SENSITIVITY - self.gyro_y_err,
+            unpacked_reading[5] / _GYRO_SENSITIVITY - self.gyro_z_err,
         )
 
     @micropython.native

@@ -25,9 +25,23 @@ idToDeviceInfo = {
 }
 
 
-def _get_input(name: str, default_val: str, message: str, config: dict) -> str:
-    if name in config:
-        suggestion = config[name]
+def _load_existing_config() -> dict:
+    files_in_root = os.listdir("/")
+
+    if "config.json" in files_in_root:
+        with open("/config.json", "r") as f:
+            config = json.loads(f.read())
+    else:
+        config = {}
+
+    return config
+
+
+def _get_input(
+    group: str, name: str, default_val: str, message: str, config: dict
+) -> str:
+    if group in config and name in config[group]:
+        suggestion = config[group][name]
     else:
         suggestion = default_val
     inp = input(f"{message} [{suggestion}]: ")
@@ -37,52 +51,49 @@ def _get_input(name: str, default_val: str, message: str, config: dict) -> str:
         return inp
 
 
-def _get_input_int(name: str, default_val: str, message: str, config: dict) -> int:
-    return int(_get_input(name, default_val, message, config))
+def _get_input_int(
+    group: str, name: str, default_val: str, message: str, config: dict
+) -> int:
+    return int(_get_input(group, name, default_val, message, config))
 
 
-def _get_input_enc(name: str, num_bits: int, message: str, config: dict) -> bytes:
+def _get_input_enc(
+    group: str, name: str, num_bits: int, message: str, config: dict
+) -> bytes:
     elems = []
     for _ in range(num_bits / 8):
         elems.append(random.getrandbits(8))
     default_val = binascii.hexlify(bytes(elems))
-    return _get_input(name, default_val, message, config)
-
-
-def _load_existing_config() -> dict:
-    files_in_root = os.listdir("/")
-
-    if "confi.json" in files_in_root:
-        with open("/config.json", "r") as f:
-            config = json.loads(f.read())
-    else:
-        config = {}
-
-    return config
+    return _get_input(group, name, default_val, message, config)
 
 
 def _core_config(config: dict) -> None:
-    config["wifi"] = {}
-    config["wifi"]["name"] = _get_input("wifi_name", "", "Wi-Fi SSID Name", config)
-    config["wifi"]["key"] = _get_input("wifi_key", "", "Wi-Fi Password", config)
-    config["lora"] = {}
+    if "wifi" not in config:
+        config["wifi"] = {}
+    config["wifi"]["name"] = _get_input("wifi", "name", "", "Wi-Fi SSID Name", config)
+    config["wifi"]["key"] = _get_input("wifi", "key", "", "Wi-Fi Password", config)
+    if "lora" not in config:
+        config["lora"] = {}
     config["lora"]["lilbuddy_addr"] = _get_input_int(
+        "lora",
         "lilbuddy_addr",
         random.randint(0, 255),
         "Lil-Buddy Address (0-255)",
         config,
     )
     config["lora"]["bigbuddy_addr"] = _get_input_int(
+        "lora",
         "bigbuddy_addr",
         random.randint(0, 255),
         "Big-Buddy Address (0-255)",
         config,
     )
     config["lora"]["key"] = _get_input_enc(
-        "encryption_key", 256, "Encryption Key (256 bit, hexlified bytes)", config
+        "lora", "key", 256, "Encryption Key (256 bit, hexlified bytes)", config
     )
     config["lora"]["iv"] = _get_input_enc(
-        "encryption_iv",
+        "lora",
+        "iv",
         128,
         "Encryption Initialization Vector (128 bit, hexlified bytes)",
         config,
@@ -109,7 +120,14 @@ def _mmc5983_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     from mmc5983ma import MMC5983MA
 
     mag = MMC5983MA(i2c)
-    mag.initialize()
+    defaults = {}
+    defaults["X_HI_OFFSET"] = 0.0
+    defaults["Y_HI_OFFSET"] = 0.0
+    defaults["Z_HI_OFFSET"] = 0.0
+    defaults["X_SI_OFFSET"] = 1.0
+    defaults["Y_SI_OFFSET"] = 1.0
+    defaults["Z_SI_OFFSET"] = 1.0
+    mag.initialize(defaults)
 
     print("MMC5983 (Magnetometer) Calibration.")
     print(
@@ -126,7 +144,7 @@ def _mmc5983_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
 
     while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
         mag.read_raw()
-        (x, y, z) = mag.decode_mag(mag.buffer)
+        (x, y, z) = mag._decode_mag_internal(mag.buffer)
         if x < x_min:
             x_min = x
         elif x > x_max:
@@ -165,7 +183,14 @@ def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     from icm20649 import ICM20649
 
     accelerometer = ICM20649(i2c)
-    accelerometer.initialize()
+    defaults = {}
+    defaults["ACC_X_ERR"] = 0.0
+    defaults["ACC_Y_ERR"] = 0.0
+    defaults["ACC_Z_ERR"] = 0.0
+    defaults["GYRO_X_ERR"] = 0.0
+    defaults["GYRO_Y_ERR"] = 0.0
+    defaults["GYRO_Z_ERR"] = 0.0
+    accelerometer.initialize(defaults)
     acc_xs, acc_ys, acc_zs = [], [], []
     gyro_xs, gyro_ys, gyro_zs = [], [], []
 
@@ -202,7 +227,14 @@ def _ism330DHCX_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     from ism330dhcx import ISM330DHCX
 
     accelerometer = ISM330DHCX(i2c)
-    accelerometer.initialize()
+    defaults = {}
+    defaults["ACC_X_ERR"] = 0.0
+    defaults["ACC_Y_ERR"] = 0.0
+    defaults["ACC_Z_ERR"] = 0.0
+    defaults["GYRO_X_ERR"] = 0.0
+    defaults["GYRO_Y_ERR"] = 0.0
+    defaults["GYRO_Z_ERR"] = 0.0
+    accelerometer.initialize(defaults)
     acc_xs, acc_ys, acc_zs = [], [], []
     gyro_xs, gyro_ys, gyro_zs = [], [], []
 
@@ -239,7 +271,11 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     from adxl375 import ADXL375
 
     accelerometer = ADXL375(i2c)
-    accelerometer.initialize()
+    defaults = {}
+    defaults["ACC_X_ERR"] = 0.0
+    defaults["ACC_Y_ERR"] = 0.0
+    defaults["ACC_Z_ERR"] = 0.0
+    accelerometer.initialize(defaults)
     xs, ys, zs = [], [], []
 
     print("ADXL375 (Accelerometer) Calibration.")
@@ -297,6 +333,32 @@ def _part_2(config: dict) -> None:
         _adxl375_offsets(config, i2c)
 
 
+def _part_3(config: dict) -> None:
+    print("")
+    print("Part 3: Configuration Tests")
+    print("---------------------------")
+    inp = 0
+    while True:
+        print("Options:")
+        print("\t1. Display Config File")
+        print("\t2. Attitude and Heading Reference System Test")
+        print("\t3. Send Encrypted Message via LoRa")
+        print("\t4. Turn on WiFi and FTP Server")
+        print("\t9. Exit")
+        inp = int(input(f"Input selection: "))
+        if inp == 1:
+            with open("/config.json", "r") as f:
+                print(json.loads(f.read()))
+        elif inp == 2:
+            print("Not yet implemented.")
+        elif inp == 3:
+            print("Not yet implemented.")
+        elif inp == 4:
+            print("Not yet implemented.")
+        elif inp == 9:
+            break
+
+
 print("")
 print("Nene Configuration Generator")
 print("============================")
@@ -305,4 +367,10 @@ config = _load_existing_config()
 _part_1(config)
 _part_2(config)
 
-print(json.dumps(config))
+with open("/config.json", "w") as f:
+    json.dump(config, f)
+print("")
+print("Configuration saved.")
+
+_part_3(config)
+

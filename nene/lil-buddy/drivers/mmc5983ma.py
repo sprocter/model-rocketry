@@ -28,12 +28,12 @@ _EXPECTED_DEVICE_ID = const(48)  # pg 16, Product ID1
 # Hard iron (HI) and Soft iron (SI) offsets
 # Calculate these once you have your board built / mounted using the
 # print_mmc5983_offsets() function in the utilities.py file
-_X_HI_OFFSET = const(5784.0)
-_Y_HI_OFFSET = const(-1682.0)
-_Z_HI_OFFSET = const(-2449.5)
-_X_SI_OFFSET = const(0.09523398)
-_Y_SI_OFFSET = const(-0.3274871)
-_Z_SI_OFFSET = const(-0.22487582)
+# _X_HI_OFFSET = const(5784.0)
+# _Y_HI_OFFSET = const(-1682.0)
+# _Z_HI_OFFSET = const(-2449.5)
+# _X_SI_OFFSET = const(0.09523398)
+# _Y_SI_OFFSET = const(-0.3274871)
+# _Z_SI_OFFSET = const(-0.22487582)
 
 # Page 2 of datasheet gives 16384 "Counts"/G[auss].
 # 1G = .0001T, so .01G = 1.0E-6T, so (16384/10000)*100 = 163.84 
@@ -45,6 +45,14 @@ class MMC5983MA:
 
     def __init__(self, i2c: I2C) -> None:
         self.i2c = i2c
+
+        self.x_hi_offset = 0.0 
+        self.y_hi_offset = 0.0 
+        self.z_hi_offset = 0.0 
+        self.x_si_offset = 1.0 
+        self.y_si_offset = 1.0 
+        self.z_si_offset = 1.0 
+
         # Mag values are three 18 bit floats split across 7 bytes 😑
         self.buffer = bytearray(7)
 
@@ -84,7 +92,7 @@ class MMC5983MA:
         self._y_offset = (y1 + y2) / 2
         self._z_offset = (z1 + z2) / 2
 
-    def initialize(self) -> None:
+    def initialize(self, offsets : dict) -> None:
         if ADDR not in self.i2c.scan():
             raise OSError(f"MMC5983MA not found at {ADDR}")
         actual_device_id = unpack(
@@ -115,6 +123,13 @@ class MMC5983MA:
 
         time.sleep_ms(10)  # Block until first reading can be taken, they take 8ms
 
+        self.x_hi_offset = offsets["X_HI_OFFSET"]
+        self.y_hi_offset = offsets["Y_HI_OFFSET"] 
+        self.z_hi_offset = offsets["Z_HI_OFFSET"] 
+        self.x_si_offset = offsets["X_SI_OFFSET"]
+        self.y_si_offset = offsets["Y_SI_OFFSET"]
+        self.z_si_offset = offsets["Z_SI_OFFSET"]
+
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ADDR, _MMC5983MA_XOUT0, self.buffer)
 
@@ -131,9 +146,9 @@ class MMC5983MA:
         x_raw = reading[0] << 10 | reading[1] << 2 | reading[6] >> 6
         y_raw = reading[2] << 10 | reading[3] << 2 | ((reading[6] >> 4) & 0x03)
         z_raw = reading[4] << 10 | reading[5] << 2 | ((reading[6] >> 2) & 0x03)
-        x_adj = (x_raw - self._x_offset - _X_HI_OFFSET) * _X_SI_OFFSET
-        y_adj = (y_raw - self._y_offset - _Y_HI_OFFSET) * _Y_SI_OFFSET
-        z_adj = (z_raw - self._z_offset - _Z_HI_OFFSET) * _Z_SI_OFFSET
+        x_adj = (x_raw - self._x_offset - self.x_hi_offset) * self.x_si_offset
+        y_adj = (y_raw - self._y_offset - self.y_hi_offset) * self.y_si_offset
+        z_adj = (z_raw - self._z_offset - self.z_hi_offset) * self.z_si_offset
         return (x_adj, y_adj, z_adj)
 
     @micropython.native
