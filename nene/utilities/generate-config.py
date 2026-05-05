@@ -170,13 +170,13 @@ def _mmc5983_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     y_si_offset = avg_hi_offset / y_hi_offset
     z_si_offset = avg_hi_offset / z_hi_offset
 
-    config["MMC5983"] = {}
-    config["MMC5983"]["X_HI_OFFSET"] = x_hi_offset
-    config["MMC5983"]["Y_HI_OFFSET"] = y_hi_offset
-    config["MMC5983"]["Z_HI_OFFSET"] = z_hi_offset
-    config["MMC5983"]["X_SI_OFFSET"] = x_si_offset
-    config["MMC5983"]["Y_SI_OFFSET"] = y_si_offset
-    config["MMC5983"]["Z_SI_OFFSET"] = z_si_offset
+    config["MMC5983MA"] = {}
+    config["MMC5983MA"]["X_HI_OFFSET"] = x_hi_offset
+    config["MMC5983MA"]["Y_HI_OFFSET"] = y_hi_offset
+    config["MMC5983MA"]["Z_HI_OFFSET"] = z_hi_offset
+    config["MMC5983MA"]["X_SI_OFFSET"] = x_si_offset
+    config["MMC5983MA"]["Y_SI_OFFSET"] = y_si_offset
+    config["MMC5983MA"]["Z_SI_OFFSET"] = z_si_offset
 
 
 def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
@@ -342,18 +342,105 @@ def _part_3(config: dict) -> None:
         print("Options:")
         print("\t1. Display Config File")
         print("\t2. Attitude and Heading Reference System Test")
-        print("\t3. Send Encrypted Message via LoRa")
+        print("\t3. Send Message via LoRa")
         print("\t4. Turn on WiFi and FTP Server")
+        print("\t5. Test Beeper")
+        print("\t6. Print GPS Coordinates")
         print("\t9. Exit")
         inp = int(input(f"Input selection: "))
         if inp == 1:
             with open("/config.json", "r") as f:
                 print(json.loads(f.read()))
         elif inp == 2:
-            print("Not yet implemented.")
+            from marg import StateEstimator
+            from bmp581 import BMP581
+            from icm20649 import ICM20649
+            from ism330dhcx import ISM330DHCX
+            from mmc5983ma import MMC5983MA
+            from orientate import orientate
+            from fusion import Fusion
+
+            duration = input("How long (in seconds) should the test run? [30]: ")
+            if duration == "":
+                duration = 30
+            else:
+                duration = int(duration)
+
+            i2c = machine.I2C(scl=9, sda=8)
+            alti = BMP581(i2c)
+            accel = ICM20649(i2c)
+            gyro = ISM330DHCX(i2c)
+            mag = MMC5983MA(i2c)
+            alti.initialize()
+            accel.initialize(config["ICM20649"])
+            gyro.initialize(config["ISM330DHCX"])
+            mag.initialize(config["MMC5983MA"])
+            estimator = StateEstimator(23, alti.error, accel.error)
+            start_ts = time.ticks_ms()
+            i = 0
+            while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
+                alti.read_raw()
+                mag.read_raw()
+                accel.read_raw()
+                gyro.read_raw()
+                estimator.magnetometer = mag.decode_mag(mag.buffer)
+                estimator.acceleration = accel.decode_accel(accel.buffer)
+                estimator.gyroscope = gyro.decode_gyro(gyro.buffer)
+                estimator.altitude = alti.decode_alti(alti.buffer)
+                i += 1
+                if i % 10 == 0:
+                    print(
+                        f"Heading: {estimator.heading:.2f}\tPitch: {estimator.pitch:.2f}\tRoll: {estimator.roll:.2f}\tAltitude: {estimator.altitude:.2f}\tVelocity: {estimator.velocity:.2f}"
+                    )
+                time.sleep_ms(23)
         elif inp == 3:
-            print("Not yet implemented.")
+            from sx1262 import SX1262
+            import struct
+
+            inp = float(input("Input a floating-point number to send to the Big Buddy: "))
+            spi_bus = 1
+            clk = 36
+            mosi = 35
+            miso = 37
+            cs = 5
+            irq = 6  # "DIO1"
+            rst = 44
+            gpio = 43  # "Busy"
+            radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
+            frequency = 917.0
+            bandwidth = 125
+            spreading_factor = 10
+            coding_rate = 8
+            sync_word = 0x12  # private
+            tx_power = -5
+            mA_limit = 125.0
+            implicit_header = False
+            use_CRC = False
+            use_LDRO = True  # Low Data-Rate Optimizer
+            radio.begin(
+                freq=frequency,
+                bw=bandwidth,
+                sf=spreading_factor,
+                cr=coding_rate,
+                syncWord=sync_word,
+                power=tx_power,
+                currentLimit=mA_limit,
+                implicit=implicit_header,
+                crcOn=use_CRC,
+            )
+            radio.forceLDRO(use_LDRO)
+            msg_header = bytearray(4)
+            msg_header[0] = config["lora"]["bigbuddy_addr"]
+            msg_header[1] = config["lora"]["lilbuddy_addr"]
+            msg_header[2] = 1
+            msg_header[3] = 0
+            payload = struct.pack(">d", inp)
+            radio.send(msg_header + payload)
         elif inp == 4:
+            print("Not yet implemented.")
+        elif inp == 5:
+            print("Not yet implemented.")
+        elif inp == 6:
             print("Not yet implemented.")
         elif inp == 9:
             break
@@ -373,4 +460,3 @@ print("")
 print("Configuration saved.")
 
 _part_3(config)
-
