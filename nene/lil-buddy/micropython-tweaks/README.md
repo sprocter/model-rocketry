@@ -20,6 +20,7 @@ You'll also need to either download a few files from some other repositories (li
         1. [micropySX126X](https://github.com/ehong-tl/micropySX126X): `_sx126x.py`, `sx126x.py`, and `sx1262.py`
         2. [micropython-fusion](https://github.com/micropython-IMU/micropython-fusion): `deltat.py`, `fusion.py`, and `orientate.py`
         3. [FTP-Server-for-ESP8266-ESP32-and-PYBD](https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD/tree/master): `uftpd.py`
+            * Delete the last line: we don't want the FTP server to auto-start upon import.
     2. All the files in the `model-rocketry/nene/lil-buddy/drivers` directory
 2. Build files, copy from `model-rocketry/nene/lil-buddy/micropython-tweaks` into `micropython/ports/esp32`
     1. FeatherS3D-makefile
