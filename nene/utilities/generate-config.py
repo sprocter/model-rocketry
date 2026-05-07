@@ -360,9 +360,12 @@ def _part_3(config: dict) -> None:
             from orientate import orientate
             from fusion import Fusion
 
-            duration = input("How long (in seconds) should the test run? [30]: ")
+            default = 30
+            duration = input(
+                f"How long (in seconds) should the test run? [{default}]: "
+            )
             if duration == "":
-                duration = 30
+                duration = default
             else:
                 duration = int(duration)
 
@@ -397,7 +400,9 @@ def _part_3(config: dict) -> None:
             from sx1262 import SX1262
             import struct
 
-            inp = float(input("Input a floating-point number to send to the Big Buddy: "))
+            inp = float(
+                input("Input a floating-point number to send to the Big Buddy: ")
+            )
             spi_bus = 1
             clk = 36
             mosi = 35
@@ -437,9 +442,56 @@ def _part_3(config: dict) -> None:
             payload = struct.pack(">d", inp)
             radio.send(msg_header + payload)
         elif inp == 4:
-            print("Not yet implemented.")
+            import network, uftpd
+
+            default = 60
+            duration = input(
+                f"How long (in seconds) should the WiFi and FTP Server be on? [{default}]: "
+            )
+            if duration == "":
+                duration = default
+            else:
+                duration = int(duration)
+
+            ap_if = network.WLAN(network.AP_IF)
+            time.sleep_ms(10)  # Give things a chance to settle
+            ap_if.active(True)
+            ap_if.config(
+                ssid=config["wifi"]["name"], security=3, key=config["wifi"]["key"]
+            )
+            while ap_if.active() == False:
+                time.sleep_ms(10)  # Give things a chance to settle
+            uftpd.stop()
+            uftpd.start(verbose=True, splash=True)
+            print(
+                f"You can now join the WiFi network '{config["wifi"]["name"]}' using the password '{config["wifi"]["key"]}' for the next {duration} seconds. The FTP Server does not use a username or password."
+            )
+            time.sleep(duration)
+            uftpd.stop()
+            ap_if.active(False)
         elif inp == 5:
-            print("Not yet implemented.")
+            from machine import PWM, Pin
+            default = 10
+            duration = input(
+                f"How long (in seconds) should the buzzer sound for (Warning: Loud) [{default}]: "
+            )
+            if duration == "":
+                duration = default
+            else:
+                duration = int(duration)
+            p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
+            p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
+            while duration > 0:
+                if p1.freq() == 5198:
+                    p1.freq(1800)
+                    p2.freq(1800)
+                else:
+                    p1.freq(5200)
+                    p2.freq(5200)
+                time.sleep(min(3, duration))
+                duration -= 3
+            p1.deinit()
+            p2.deinit()
         elif inp == 6:
             print("Not yet implemented.")
         elif inp == 9:
