@@ -40,10 +40,12 @@ _MODE_TOUCHDOWN = const(4)
 _MODE_FINISHED = const(5)
 _MODE_WIFI = const(6)
 
-_RELENG_DEVELOP = const(0)
-_RELENG_TEST = const(1)
-_RELENG_RELEASE = const(2)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+_RELENG_DEVELOP_NOGPS = const(0)
+_RELENG_DEVELOP = const(1)
+_RELENG_TEST_NOGPS = const(2)
+_RELENG_TEST = const(3)
+_RELENG_RELEASE = const(4)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP_NOGPS)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -115,8 +117,8 @@ def get_sensor_readings(timer: Timer) -> None:
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
-    # Devices burst read all their values into one buffer -- we only decode 
-    # what we need. So, if the accel and gyro are aliased, we should not 
+    # Devices burst read all their values into one buffer -- we only decode
+    # what we need. So, if the accel and gyro are aliased, we should not
     # trigger a second read.
     if accel != gyro:
         gyro.read_raw()
@@ -197,17 +199,17 @@ def process_reading(
 
     mag_rdg = mag.decode_mag(mag_buffer)
     estimator.magnetometer = mag_rdg
-    
+
     acc_rdg = accel.decode_accel(acc_buffer)
     estimator.acceleration = acc_rdg
-    
+
     gyro_rdg = gyro.decode_gyro(gyro_buffer)
     estimator.gyroscope = gyro_rdg
-    
+
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
-    
+
     estimated_altitude = estimator.altitude  # Use the estimated altitude
-    
+
     if mode == _MODE_ASCENT and barometric_altitude > apogee:
         apogee = barometric_altitude
     if mode == _MODE_LAUNCHPAD or mode == _MODE_ASCENT:
@@ -365,7 +367,7 @@ def _update_neopixel() -> None:
     neopixel.write()
 
 
-def _init_radio():
+def _init_radio(config: dict):
     global msg_header, msg_id
 
     spi_bus = 1
@@ -405,8 +407,8 @@ def _init_radio():
     )
     radio.forceLDRO(use_LDRO)
     msg_id = 1
-    hdr_to = secrets["bigbuddy-addr"]
-    hdr_from = secrets["lilbuddy-addr"]
+    hdr_to = config["lora"]["bigbuddy_addr"]
+    hdr_from = config["lora"]["lilbuddy_addr"]
     msg_header = bytearray(4)
     msg_header[0] = hdr_to
     msg_header[1] = hdr_from
@@ -414,58 +416,59 @@ def _init_radio():
     return radio
 
 
-def _init_devices() -> None:
+def _init_devices(config: dict) -> None:
     global accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED
     i2c = I2C(scl=9, sda=8)
     connected_devices = i2c.scan()
 
     if BMP581.ADDR in connected_devices:
         alti = BMP581(i2c)
+        alti.initialize()
     else:
         raise OSError(f"No altimeter connected!")
 
     if MMC5983MA.ADDR in connected_devices:
         mag = MMC5983MA(i2c)
+        mag.initialize(config["MMC5983MA"])
     else:
         raise OSError(f"No magnetometer connected!")
-    
-    gps = PA1010(16, 15)
 
-    # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g, 
+    gps = PA1010(16, 15)
+    gps.initialize()
+
+    # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g,
     # and ISM330DHCX ±16
     if ADXL375.ADDR in connected_devices:
         accel = ADXL375(i2c)
+        accel.initialize(config["ADXL375"])
     elif ICM20649.ADDR in connected_devices:
         accel = ICM20649(i2c)
+        accel.initialize(config["ICM20649"])
     elif ISM330DHCX.ADDR in connected_devices:
         accel = ISM330DHCX(i2c)
+        accel.initialize(config["ISM330DHCX"])
     else:
         raise OSError(f"No accelerometer connected!")
 
-    # Both ISM330DHCX and ICM20649 have the same range, but the ISM330DHCX is 
-    # more accurate, so we prefer it. We also alias the object if we are using 
+    # Both ISM330DHCX and ICM20649 have the same range, but the ISM330DHCX is
+    # more accurate, so we prefer it. We also alias the object if we are using
     # the same device for the accelerometer and gyroscope.
     if ISM330DHCX.ADDR in connected_devices:
         if isinstance(accel, ISM330DHCX):
             gyro = accel
         else:
             gyro = ISM330DHCX(i2c)
+            gyro.initialize(config["ISM330DHCX"])
     elif ICM20649.ADDR in connected_devices:
         if isinstance(accel, ICM20649):
             gyro = accel
         else:
             gyro = ICM20649(i2c)
+            gyro.initialize(config["ICM20649"])
     else:
         raise OSError(f"No gyroscope connected!")
 
-    alti.initialize()
-    mag.initialize()
-    accel.initialize()
-    if accel != gyro:
-        gyro.initialize()
-    gps.initialize()
-
-    radio = _init_radio()
+    radio = _init_radio(config)
 
     # Even though the battery monitor is on the board, it communicates via I2C
     # so we initialize it here, rather than _init_board
@@ -501,7 +504,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, secrets, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp
 
     mode = _MODE_INITIALIZE
 
@@ -512,10 +515,10 @@ def initialize():
 
     initial_mcu_temp = esp32.mcu_temperature()
 
-    with open("/secrets.json", "r") as f:
-        secrets = json.loads(f.read())
+    with open("/config.json", "r") as f:
+        config = json.loads(f.read())
 
-    _init_devices()
+    _init_devices(config)
 
     initial_batt_soc = batt_monitor.charge_percent
 
@@ -532,8 +535,12 @@ def initialize():
     ground_readings = deque([], _LAUNCHPAD_READINGS)
     ascent_altis = deque([], _RECENT_READINGS)
     descent_altis = deque([], _RECENT_READINGS)
-    while (time.ticks_diff(time.ticks_ms(), init_time) < 3) and (
-    #while (time.ticks_diff(time.ticks_ms(), init_time) < 300_000) and (
+
+    if _RELEASE_LEVEL == _RELENG_DEVELOP_NOGPS or _RELEASE_LEVEL == _RELENG_TEST_NOGPS:
+        gps_wait_time = 3
+    else:
+        gps_wait_time = 300_000
+    while (time.ticks_diff(time.ticks_ms(), init_time) < gps_wait_time) and (
         gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
     ):
         if npxl_on:
@@ -558,8 +565,8 @@ def initialize():
         clock.init(
             (
                 2026,  # Hardcoded dates since we don't get
-                4,  # date info from the GPS
-                26,
+                6,  # date info from the GPS
+                13,
                 gps.hour - 4,  # Timezones, oy
                 gps.minute,
                 gps.second,
@@ -703,19 +710,19 @@ def touchdown() -> None:
 def share_files() -> None:
     """Turns on wifi and an FTP server
 
-    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "secrets.json"), and then turn on a FTP server (no username or password).
+    This will turn the device into a Wi-Fi access point (using the SSID and password from the file "config.json"), and then turn on a FTP server (no username or password).
     """
 
     global mode
     mode = _MODE_WIFI
     _update_neopixel()
-    with open("/secrets.json", "r") as f:
-        secrets = json.loads(f.read())
+    with open("/config.json", "r") as f:
+        config = json.loads(f.read())
     gc.collect()
     ap_if = network.WLAN(network.AP_IF)
     time.sleep_ms(10)  # Give things a chance to settle
     ap_if.active(True)
-    ap_if.config(ssid=secrets["ssid"], security=3, key=secrets["key"])
+    ap_if.config(ssid=config["wifi"]["name"], security=3, key=config["wifi"]["key"])
     while ap_if.active() == False:
         time.sleep_ms(10)  # Give things a chance to settle
     gc.collect()
@@ -726,7 +733,7 @@ def share_files() -> None:
 
 try:
     initialize()
-    if _RELEASE_LEVEL == _RELENG_DEVELOP:
+    if _RELEASE_LEVEL == _RELENG_DEVELOP or _RELEASE_LEVEL == _RELENG_DEVELOP_NOGPS:
         time.sleep(15)
         ascent()
         time.sleep(5)
