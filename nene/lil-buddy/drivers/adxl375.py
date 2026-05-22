@@ -16,12 +16,16 @@ from struct import unpack
 from micropython import const
 import time
 
-_ADXL375_DEVID = const(0x00)
-_ADXL375_BW_RATE = const(0x2C)
-_ADXL375_POWER_CTL = const(0x2D)
-_ADXL375_DATAX0 = const(0x32)
+G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
+
+_ADXL375_DEVID = const(0x00)  # Datasheet pg 21
+_ADXL375_BW_RATE = const(0x2C)  # Datasheet pg 22
+_ADXL375_POWER_CTL = const(0x2D)  # Datasheet pg 22
+_ADXL375_DATAX0 = const(0x32)  # Datasheet pg 24
 
 _SCALE_FACTOR = const(0.049)  # Datasheet pg 3, Tbl 1
+_ACCEL_ADJUST = const(G_TO_MS2 * _SCALE_FACTOR)
+
 # _X_ERR = const(0.0793798)  # From print_accel_offsets() in utilities.py
 # _Y_ERR = const(-0.2010956)  # From print_accel_offsets() in utilities.py
 # _Z_ERR = const(-0.5096079)  # From print_accel_offsets() in utilities.py
@@ -33,7 +37,7 @@ class ADXL375:
     ADDR = const(0x53)
 
     def __init__(self, i2c: I2C) -> None:
-        self.i2c = i2c        
+        self.i2c = i2c
         self.x_err = 0.0
         self.y_err = 0.0
         self.z_err = 0.0
@@ -49,7 +53,7 @@ class ADXL375:
             raise OSError(f"ADXL375 has incorrect device id {actual_device_id}")
 
         self.i2c.writeto_mem(ADDR, _ADXL375_POWER_CTL, b"\x08")
-        self.i2c.writeto_mem(ADDR, _ADXL375_BW_RATE, b"\x08")
+        self.i2c.writeto_mem(ADDR, _ADXL375_BW_RATE, b"\x0a")
         time.sleep_ms(10)
 
         self.x_err = offsets["ACC_X_ERR"]
@@ -59,10 +63,21 @@ class ADXL375:
     def read_raw(self) -> None:
         self.i2c.readfrom_mem_into(ADDR, _ADXL375_DATAX0, self.buffer)
 
+    @micropython.native
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
         return (
-            unpacked_reading[0] * _SCALE_FACTOR - self.x_err,
-            unpacked_reading[1] * _SCALE_FACTOR - self.y_err,
-            unpacked_reading[2] * _SCALE_FACTOR - self.z_err,
+            unpacked_reading[0] * _ACCEL_ADJUST - self.x_err,
+            unpacked_reading[1] * _ACCEL_ADJUST - self.y_err,
+            unpacked_reading[2] * _ACCEL_ADJUST - self.z_err,
         )
+
+    @property
+    def error(self) -> float:
+        """
+        Return the standard deviation of the sensor's error in meters per second per second
+
+        :returns: The standard deviation of the decoded readings' error
+        :rtype: float
+        """
+        return 5.0

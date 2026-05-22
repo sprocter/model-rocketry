@@ -179,7 +179,7 @@ def _mmc5983_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     config["MMC5983MA"]["Z_SI_OFFSET"] = z_si_offset
 
 
-def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
+def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     from icm20649 import ICM20649
 
     accelerometer = ICM20649(i2c)
@@ -223,7 +223,7 @@ def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     config["ICM20649"]["GYRO_Z_ERR"] = sum(gyro_zs) / len(gyro_zs)
 
 
-def _ism330DHCX_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
+def _ism330DHCX_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     from ism330dhcx import ISM330DHCX
 
     accelerometer = ISM330DHCX(i2c)
@@ -267,7 +267,7 @@ def _ism330DHCX_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     config["ISM330DHCX"]["GYRO_Z_ERR"] = sum(gyro_zs) / len(gyro_zs)
 
 
-def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
+def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     from adxl375 import ADXL375
 
     accelerometer = ADXL375(i2c)
@@ -283,18 +283,19 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 20) -> None:
     print("Calibration begins in 10 seconds.")
     time.sleep(10)
     print(f"Calibration beginning now, it will take {duration} seconds...")
+    start_ts = time.ticks_ms()
     while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
         accelerometer.read_raw()
-        accel_reading = accelerometer.decode_reading(accelerometer.buffer)
+        accel_reading = accelerometer.decode_accel(accelerometer.buffer)
         xs.append(accel_reading[0])
         ys.append(accel_reading[1])
         zs.append(accel_reading[2])
         time.sleep_ms(23)
 
     config["ADXL375"] = {}
-    config["ADXL375"]["ACC_X_ERR"] = sum(xs) / len(xs)
+    config["ADXL375"]["ACC_X_ERR"] = sum(xs) / len(xs) - _G_TO_MS2
     config["ADXL375"]["ACC_Y_ERR"] = sum(ys) / len(ys)
-    config["ADXL375"]["ACC_Z_ERR"] = sum(zs) / len(zs) - _G_TO_MS2
+    config["ADXL375"]["ACC_Z_ERR"] = sum(zs) / len(zs)
 
 
 def _part_2(config: dict) -> None:
@@ -355,6 +356,7 @@ def _part_3(config: dict) -> None:
             from marg import StateEstimator
             from bmp581 import BMP581
             from icm20649 import ICM20649
+            from adxl375 import ADXL375
             from ism330dhcx import ISM330DHCX
             from mmc5983ma import MMC5983MA
             from orientate import orientate
@@ -370,13 +372,37 @@ def _part_3(config: dict) -> None:
                 duration = int(duration)
 
             i2c = machine.I2C(scl=9, sda=8)
+            connected_devices = i2c.scan()
             alti = BMP581(i2c)
-            accel = ICM20649(i2c)
-            gyro = ISM330DHCX(i2c)
+            if ADXL375.ADDR in connected_devices:
+                accel = ADXL375(i2c)
+                accel.initialize(config["ADXL375"])
+            elif ICM20649.ADDR in connected_devices:
+                accel = ICM20649(i2c)
+                accel.initialize(config["ICM20649"])
+            elif ISM330DHCX.ADDR in connected_devices:
+                accel = ISM330DHCX(i2c)
+                accel.initialize(config["ISM330DHCX"])
+            else:
+                raise OSError(f"No accelerometer connected!")
+
+            if ISM330DHCX.ADDR in connected_devices:
+                if isinstance(accel, ISM330DHCX):
+                    gyro = accel
+                else:
+                    gyro = ISM330DHCX(i2c)
+                    gyro.initialize(config["ISM330DHCX"])
+            elif ICM20649.ADDR in connected_devices:
+                if isinstance(accel, ICM20649):
+                    gyro = accel
+                else:
+                    gyro = ICM20649(i2c)
+                    gyro.initialize(config["ICM20649"])
+            else:
+                raise OSError(f"No gyroscope connected!")
+
             mag = MMC5983MA(i2c)
             alti.initialize()
-            accel.initialize(config["ICM20649"])
-            gyro.initialize(config["ISM330DHCX"])
             mag.initialize(config["MMC5983MA"])
             estimator = StateEstimator(23, alti.error, accel.error)
             start_ts = time.ticks_ms()
@@ -471,6 +497,7 @@ def _part_3(config: dict) -> None:
             ap_if.active(False)
         elif inp == 5:
             from machine import PWM, Pin
+
             default = 10
             duration = input(
                 f"How long (in seconds) should the buzzer sound for (Warning: Loud) [{default}]: "
