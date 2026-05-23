@@ -18,7 +18,7 @@ module battery_cover(){
             translate([DEPTH, DEPTH, -EPSILON/2]){
                 cube([.8*I2M+DEPTH-2*DEPTH, 43-2*DEPTH-2, DEPTH+EPSILON]);
             }
-            translate([.8*I2M/2, 1.6*I2M, -EPSILON/2]){
+            translate([.9*I2M/2, 1.6*I2M, -EPSILON/2]){
                 translate([0, .05*I2M,0]){
                     cylinder(h = DEPTH + EPSILON, d = .1*I2M);
                 }
