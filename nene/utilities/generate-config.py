@@ -334,6 +334,219 @@ def _part_2(config: dict) -> None:
         _adxl375_offsets(config, i2c)
 
 
+def _print_config() -> None:
+    with open("/config.json", "r") as f:
+        print(json.loads(f.read()))
+
+
+def _test_AHRS() -> None:
+    from marg import StateEstimator
+    from bmp581 import BMP581
+    from icm20649 import ICM20649
+    from adxl375 import ADXL375
+    from ism330dhcx import ISM330DHCX
+    from mmc5983ma import MMC5983MA
+    from orientate import orientate
+    from fusion import Fusion
+
+    default = 30
+    duration = input(f"How long (in seconds) should the test run? [{default}]: ")
+    if duration == "":
+        duration = default
+    else:
+        duration = int(duration)
+
+    i2c = machine.I2C(scl=9, sda=8)
+    connected_devices = i2c.scan()
+    alti = BMP581(i2c)
+    if ADXL375.ADDR in connected_devices:
+        accel = ADXL375(i2c)
+        accel.initialize(config["ADXL375"])
+    elif ICM20649.ADDR in connected_devices:
+        accel = ICM20649(i2c)
+        accel.initialize(config["ICM20649"])
+    elif ISM330DHCX.ADDR in connected_devices:
+        accel = ISM330DHCX(i2c)
+        accel.initialize(config["ISM330DHCX"])
+    else:
+        raise OSError(f"No accelerometer connected!")
+
+    if ISM330DHCX.ADDR in connected_devices:
+        if isinstance(accel, ISM330DHCX):
+            gyro = accel
+        else:
+            gyro = ISM330DHCX(i2c)
+            gyro.initialize(config["ISM330DHCX"])
+    elif ICM20649.ADDR in connected_devices:
+        if isinstance(accel, ICM20649):
+            gyro = accel
+        else:
+            gyro = ICM20649(i2c)
+            gyro.initialize(config["ICM20649"])
+    else:
+        raise OSError(f"No gyroscope connected!")
+
+    mag = MMC5983MA(i2c)
+    alti.initialize()
+    mag.initialize(config["MMC5983MA"])
+    estimator = StateEstimator(23, alti.error, accel.error)
+    start_ts = time.ticks_ms()
+    i = 0
+    while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
+        alti.read_raw()
+        mag.read_raw()
+        accel.read_raw()
+        gyro.read_raw()
+        estimator.magnetometer = mag.decode_mag(mag.buffer)
+        estimator.acceleration = accel.decode_accel(accel.buffer)
+        estimator.gyroscope = gyro.decode_gyro(gyro.buffer)
+        estimator.altitude = alti.decode_alti(alti.buffer)
+        i += 1
+        if i % 10 == 0:
+            print(
+                f"Heading: {estimator.heading:.2f}\tPitch: {estimator.pitch:.2f}\tRoll: {estimator.roll:.2f}\tAltitude: {estimator.altitude:.2f}\tVelocity: {estimator.velocity:.2f}"
+            )
+        time.sleep_ms(23)
+
+
+def _send_lora_msg() -> None:
+    from sx1262 import SX1262
+    import struct
+
+    inp = float(input("Input a floating-point number to send to the Big Buddy: "))
+    spi_bus = 1
+    clk = 36
+    mosi = 35
+    miso = 37
+    cs = 5
+    irq = 6  # "DIO1"
+    rst = 44
+    gpio = 43  # "Busy"
+    radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
+    frequency = 917.0
+    bandwidth = 125
+    spreading_factor = 10
+    coding_rate = 8
+    sync_word = 0x12  # private
+    tx_power = -5
+    mA_limit = 125.0
+    implicit_header = False
+    use_CRC = False
+    use_LDRO = True  # Low Data-Rate Optimizer
+    radio.begin(
+        freq=frequency,
+        bw=bandwidth,
+        sf=spreading_factor,
+        cr=coding_rate,
+        syncWord=sync_word,
+        power=tx_power,
+        currentLimit=mA_limit,
+        implicit=implicit_header,
+        crcOn=use_CRC,
+    )
+    radio.forceLDRO(use_LDRO)
+    msg_header = bytearray(4)
+    msg_header[0] = config["lora"]["bigbuddy_addr"]
+    msg_header[1] = config["lora"]["lilbuddy_addr"]
+    msg_header[2] = 1
+    msg_header[3] = 0
+    payload = struct.pack(">d", inp)
+    radio.send(msg_header + payload)
+
+
+def _test_wifi_ftp() -> None:
+    import network, uftpd
+
+    default = 60
+    duration = input(
+        f"How long (in seconds) should the WiFi and FTP Server be on? [{default}]: "
+    )
+    if duration == "":
+        duration = default
+    else:
+        duration = int(duration)
+
+    ap_if = network.WLAN(network.AP_IF)
+    time.sleep_ms(10)  # Give things a chance to settle
+    ap_if.active(True)
+    ap_if.config(ssid=config["wifi"]["name"], security=3, key=config["wifi"]["key"])
+    while ap_if.active() == False:
+        time.sleep_ms(10)  # Give things a chance to settle
+    uftpd.stop()
+    uftpd.start(verbose=True, splash=True)
+    print(
+        f"You can now join the WiFi network '{config["wifi"]["name"]}' using the password '{config["wifi"]["key"]}' for the next {duration} seconds. The FTP Server does not use a username or password."
+    )
+    time.sleep(duration)
+    uftpd.stop()
+    ap_if.active(False)
+
+
+def _test_beeper() -> None:
+    from machine import PWM, Pin
+
+    default = 10
+    duration = input(
+        f"How long (in seconds) should the buzzer sound for (Warning: Loud) [{default}]: "
+    )
+    if duration == "":
+        duration = default
+    else:
+        duration = int(duration)
+    p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
+    p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
+    while duration > 0:
+        if p1.freq() == 5198:
+            p1.freq(1800)
+            p2.freq(1800)
+        else:
+            p1.freq(5200)
+            p2.freq(5200)
+        time.sleep(min(3, duration))
+        duration -= 3
+    p1.deinit()
+    p2.deinit()
+
+
+def _print_gps() -> None:
+    from pa1010 import PA1010
+
+    gps = PA1010(16, 15)
+    gps.initialize()
+
+    default = 5
+    duration = input(
+        f"Maximum time (in minutes) to wait for a GPS signal? [{default}]: "
+    )
+    if duration == "":
+        duration = default
+    else:
+        duration = int(duration)
+
+    gps_wait_time = duration * 60 * 1000  # minutes * seconds * milliseconds
+    init_time = time.ticks_ms()
+    while (time.ticks_diff(time.ticks_ms(), init_time) < gps_wait_time) and (
+        gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
+    ):
+
+        gps.clear_buffer()
+        time.sleep_ms(100)
+        gps.read_raw()
+
+        if gps.buffer != None:
+            gps.decode_reading(gps.buffer)
+
+    lat = gps.lat  # ddmm.mmmm
+    latdd = int(lat[0:2])
+    latmm = float(lat[2:])
+    lon = gps.lon  # dddmm.mmmm
+    londd = int(lon[0:3])
+    lonmm = float(lon[3:])
+    print(
+        f"Your location is {latdd}°{latmm}{str(gps.latNS.decode("UTF-8"))} {londd}°{lonmm}{str(gps.lonEW.decode("UTF-8"))}"
+    )
+
+
 def _part_3(config: dict) -> None:
     print("")
     print("Part 3: Configuration Tests")
@@ -350,177 +563,17 @@ def _part_3(config: dict) -> None:
         print("\t9. Exit")
         inp = int(input(f"Input selection: "))
         if inp == 1:
-            with open("/config.json", "r") as f:
-                print(json.loads(f.read()))
+            _print_config()
         elif inp == 2:
-            from marg import StateEstimator
-            from bmp581 import BMP581
-            from icm20649 import ICM20649
-            from adxl375 import ADXL375
-            from ism330dhcx import ISM330DHCX
-            from mmc5983ma import MMC5983MA
-            from orientate import orientate
-            from fusion import Fusion
-
-            default = 30
-            duration = input(
-                f"How long (in seconds) should the test run? [{default}]: "
-            )
-            if duration == "":
-                duration = default
-            else:
-                duration = int(duration)
-
-            i2c = machine.I2C(scl=9, sda=8)
-            connected_devices = i2c.scan()
-            alti = BMP581(i2c)
-            if ADXL375.ADDR in connected_devices:
-                accel = ADXL375(i2c)
-                accel.initialize(config["ADXL375"])
-            elif ICM20649.ADDR in connected_devices:
-                accel = ICM20649(i2c)
-                accel.initialize(config["ICM20649"])
-            elif ISM330DHCX.ADDR in connected_devices:
-                accel = ISM330DHCX(i2c)
-                accel.initialize(config["ISM330DHCX"])
-            else:
-                raise OSError(f"No accelerometer connected!")
-
-            if ISM330DHCX.ADDR in connected_devices:
-                if isinstance(accel, ISM330DHCX):
-                    gyro = accel
-                else:
-                    gyro = ISM330DHCX(i2c)
-                    gyro.initialize(config["ISM330DHCX"])
-            elif ICM20649.ADDR in connected_devices:
-                if isinstance(accel, ICM20649):
-                    gyro = accel
-                else:
-                    gyro = ICM20649(i2c)
-                    gyro.initialize(config["ICM20649"])
-            else:
-                raise OSError(f"No gyroscope connected!")
-
-            mag = MMC5983MA(i2c)
-            alti.initialize()
-            mag.initialize(config["MMC5983MA"])
-            estimator = StateEstimator(23, alti.error, accel.error)
-            start_ts = time.ticks_ms()
-            i = 0
-            while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
-                alti.read_raw()
-                mag.read_raw()
-                accel.read_raw()
-                gyro.read_raw()
-                estimator.magnetometer = mag.decode_mag(mag.buffer)
-                estimator.acceleration = accel.decode_accel(accel.buffer)
-                estimator.gyroscope = gyro.decode_gyro(gyro.buffer)
-                estimator.altitude = alti.decode_alti(alti.buffer)
-                i += 1
-                if i % 10 == 0:
-                    print(
-                        f"Heading: {estimator.heading:.2f}\tPitch: {estimator.pitch:.2f}\tRoll: {estimator.roll:.2f}\tAltitude: {estimator.altitude:.2f}\tVelocity: {estimator.velocity:.2f}"
-                    )
-                time.sleep_ms(23)
+            _test_AHRS()
         elif inp == 3:
-            from sx1262 import SX1262
-            import struct
-
-            inp = float(
-                input("Input a floating-point number to send to the Big Buddy: ")
-            )
-            spi_bus = 1
-            clk = 36
-            mosi = 35
-            miso = 37
-            cs = 5
-            irq = 6  # "DIO1"
-            rst = 44
-            gpio = 43  # "Busy"
-            radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
-            frequency = 917.0
-            bandwidth = 125
-            spreading_factor = 10
-            coding_rate = 8
-            sync_word = 0x12  # private
-            tx_power = -5
-            mA_limit = 125.0
-            implicit_header = False
-            use_CRC = False
-            use_LDRO = True  # Low Data-Rate Optimizer
-            radio.begin(
-                freq=frequency,
-                bw=bandwidth,
-                sf=spreading_factor,
-                cr=coding_rate,
-                syncWord=sync_word,
-                power=tx_power,
-                currentLimit=mA_limit,
-                implicit=implicit_header,
-                crcOn=use_CRC,
-            )
-            radio.forceLDRO(use_LDRO)
-            msg_header = bytearray(4)
-            msg_header[0] = config["lora"]["bigbuddy_addr"]
-            msg_header[1] = config["lora"]["lilbuddy_addr"]
-            msg_header[2] = 1
-            msg_header[3] = 0
-            payload = struct.pack(">d", inp)
-            radio.send(msg_header + payload)
+            _send_lora_msg()
         elif inp == 4:
-            import network, uftpd
-
-            default = 60
-            duration = input(
-                f"How long (in seconds) should the WiFi and FTP Server be on? [{default}]: "
-            )
-            if duration == "":
-                duration = default
-            else:
-                duration = int(duration)
-
-            ap_if = network.WLAN(network.AP_IF)
-            time.sleep_ms(10)  # Give things a chance to settle
-            ap_if.active(True)
-            ap_if.config(
-                ssid=config["wifi"]["name"], security=3, key=config["wifi"]["key"]
-            )
-            while ap_if.active() == False:
-                time.sleep_ms(10)  # Give things a chance to settle
-            uftpd.stop()
-            uftpd.start(verbose=True, splash=True)
-            print(
-                f"You can now join the WiFi network '{config["wifi"]["name"]}' using the password '{config["wifi"]["key"]}' for the next {duration} seconds. The FTP Server does not use a username or password."
-            )
-            time.sleep(duration)
-            uftpd.stop()
-            ap_if.active(False)
+            _test_wifi_ftp()
         elif inp == 5:
-            from machine import PWM, Pin
-
-            default = 10
-            duration = input(
-                f"How long (in seconds) should the buzzer sound for (Warning: Loud) [{default}]: "
-            )
-            if duration == "":
-                duration = default
-            else:
-                duration = int(duration)
-            p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
-            p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
-            while duration > 0:
-                if p1.freq() == 5198:
-                    p1.freq(1800)
-                    p2.freq(1800)
-                else:
-                    p1.freq(5200)
-                    p2.freq(5200)
-                time.sleep(min(3, duration))
-                duration -= 3
-            p1.deinit()
-            p2.deinit()
+            _test_beeper()
         elif inp == 6:
-            print("Not yet implemented.")
+            _print_gps()
         elif inp == 9:
             break
 
@@ -530,12 +583,12 @@ print("Nene Configuration Generator")
 print("============================")
 config = _load_existing_config()
 
-_part_1(config)
-_part_2(config)
+# _part_1(config)
+# _part_2(config)
 
-with open("/config.json", "w") as f:
-    json.dump(config, f)
-print("")
-print("Configuration saved.")
+# with open("/config.json", "w") as f:
+#     json.dump(config, f)
+# print("")
+# print("Configuration saved.")
 
 _part_3(config)
