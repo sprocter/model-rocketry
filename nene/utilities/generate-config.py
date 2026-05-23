@@ -583,12 +583,12 @@ print("Nene Configuration Generator")
 print("============================")
 config = _load_existing_config()
 
-# _part_1(config)
-# _part_2(config)
+_part_1(config)
+_part_2(config)
 
-# with open("/config.json", "w") as f:
-#     json.dump(config, f)
-# print("")
-# print("Configuration saved.")
+with open("/config.json", "w") as f:
+    json.dump(config, f)
+print("")
+print("Configuration saved.")
 
 _part_3(config)
