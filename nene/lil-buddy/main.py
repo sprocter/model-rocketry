@@ -570,7 +570,7 @@ def initialize():
                 gps.hour - 4,  # Timezones, oy
                 gps.minute,
                 gps.second,
-                gps.milli,  # microsecond, ignored (?)
+                0,  # microsecond, ignored (?)
                 0,  # tzinfo, ignored
             )
         )
@@ -608,21 +608,12 @@ def descent() -> None:
         enable_buzzer()
 
 
-def _write_data() -> None:
-    time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
-    adjusted_ground_readings = []
-    while len(ground_readings) > 0:
-        entry = ground_readings.popleft()
-        unpacked = list(unpack(">ffffffffffffffffffff", entry))
-        unpacked[0] -= time_offset_ms
-        adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
-    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
-    batt_hdr_str = (
-        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
-    )
-    mcu_hdr_str = (
-        f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
-    )
+def _build_header_str() -> str:
+    with open("/config.json", "r") as f:
+        config = json.loads(f.read())
+
+    name_hdr_str = config["system"]["name"]
+    placeholder_str = ""  # We need a blank entry for the template to work out, something else can go here later if need be
     if _GPS_CONNECTED:
         year = launch_time_ymdwhms[0]
         month = launch_time_ymdwhms[1]
@@ -635,7 +626,28 @@ def _write_data() -> None:
         )
     else:
         date_hdr_str = "No Date"
-    header_str = f"{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
+    batt_hdr_str = (
+        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
+    )
+    mcu_hdr_str = (
+        f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
+    )
+
+    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
+
+    return f"{name_hdr_str},{placeholder_str},{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
+
+
+def _write_data() -> None:
+    time_offset_ms = time.ticks_diff(launch_time_ms, init_time)
+    adjusted_ground_readings = []
+    while len(ground_readings) > 0:
+        entry = ground_readings.popleft()
+        unpacked = list(unpack(">ffffffffffffffffffff", entry))
+        unpacked[0] -= time_offset_ms
+        adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
+
+    header_str = _build_header_str()
 
     if _RELEASE_LEVEL == _RELENG_RELEASE:
         # Expect filenames of the form 'launch-XXXX.csv'
