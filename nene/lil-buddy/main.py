@@ -45,7 +45,7 @@ _RELENG_DEVELOP = const(1)
 _RELENG_TEST_NOGPS = const(2)
 _RELENG_TEST = const(3)
 _RELENG_RELEASE = const(4)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP_NOGPS)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -564,13 +564,13 @@ def initialize():
         clock = RTC()
         clock.init(
             (
-                2026,  # Hardcoded dates since we don't get
-                6,  # date info from the GPS
-                13,
+                gps.year,
+                gps.month,
+                gps.day,
                 gps.hour - 4,  # Timezones, oy
                 gps.minute,
                 gps.second,
-                0,  # microsecond, ignored
+                gps.milli,  # microsecond, ignored (?)
                 0,  # tzinfo, ignored
             )
         )

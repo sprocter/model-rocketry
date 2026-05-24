@@ -1,7 +1,7 @@
 """
 A quick, minimal driver for the PA1010D GPS Module
 
-A few modifications by Sam Procter, 2025: The original (1) used I2C, but it reads one character at a time so was too slow for what I needed. It also used functionality in Micropython's regular expressions module that is not available on the ESP32S3, so I rewrote those portions. I also only need data from GGA messages, so I removed the RMC functionality. I adapted / used the send_command function from (2), which is for CircuitPython rather than MicroPython.
+A few modifications by Sam Procter, 2025: The original (1) used I2C, but it reads one character at a time so was too slow for what I needed. It also used functionality in Micropython's regular expressions module that is not available on the ESP32S3, so I rewrote those portions. I adapted / used the send_command function from (2), which is for CircuitPython rather than MicroPython.
 
 Adapted from
 1. GPS Driver, (c) 2022 by Mike Bell licensed under MIT
@@ -29,12 +29,18 @@ GGA_DECODE = re.compile(
     r"\$GNGGA,(\d\d)(\d\d)(\d\d)\.(\d\d\d),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),(\d),(\d+),[^,]+,([0-9.]+),"
 )
 
+RMC_DECODE = re.compile(
+    r"\$GNRMC,(\d\d)(\d\d)(\d\d)\.(\d\d\d),([AV]),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),([0-9.]+),([0-9.]+),(\d\d)(\d\d)(\d\d),"
+)
+
+
 class PA1010:
 
     def __init__(self, uart_tx, uart_rx):
         self.tx = uart_tx
         self.rx = uart_rx
         self.buffer = b""
+        self.init_done = False  # We switch NMEA sentences once we have a fix
 
         # Set placeholder values to avoid attr checks in speed-critical code
         self.altitude = 0.0
@@ -43,31 +49,36 @@ class PA1010:
 
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
-    def initialize(self):
-        # Get "fix data" every update
-        self._send_command("PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+    def initialize(self) -> None:
         # Increase the baud rate to the maximum
         self._send_command("PMTK251,115200")
         # Re initialize the UART to use the higher baud rate
         self.uart.init(baudrate=115200, tx=self.tx, rx=self.rx)
         # The UART seems to need a hot sec to reinitialize...
-        time.sleep_ms(100)
         # Get a new fix every 100 ms
         self._send_command("PMTK220,100")
+        time.sleep_ms(100)
+        # Get "recommended minimum" every update
+        self._send_command("PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        time.sleep_ms(100)
 
     def read_raw(self):
         self.buffer = self.uart.readline()
 
     def decode_reading(self, reading: bytearray) -> None:
-        if reading is not None:
+        if self.init_done and reading is not None:
             m = GGA_DECODE.match(reading)
             if m is not None:
                 self._set_data_from_gga(m)
+        elif not self.init_done and reading is not None:
+            m = RMC_DECODE.match(reading)
+            if m is not None:
+                self._set_data_from_rmc(m)
 
     def clear_buffer(self) -> None:
         self.uart.read()
 
-    def _send_command(self, command, add_checksum=True):
+    def _send_command(self, command, add_checksum=True) -> None:
         """Send a command string
         If add_checksum is True (the default) a NMEA checksum will automatically be computed and added.
         """
@@ -89,7 +100,23 @@ class PA1010:
         # Wait for the writes to complete
         self.uart.flush()
 
-    def _set_data_from_gga(self, m):
+    def _set_data_from_rmc(self, m) -> None:
+        if (m.group(5) != b"A"):
+            return
+        self.valid = True
+        self.hour = int(m.group(1))
+        self.minute = int(m.group(2))
+        self.second = int(m.group(3))
+        self.milli = int(m.group(4))
+        
+        self.day = int(m.group(12))
+        self.month = int(m.group(13))
+        self.year = 2000+int(m.group(14))
+        # Switch to just getting "fix data" every update
+        self._send_command("PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        self.init_done = True
+
+    def _set_data_from_gga(self, m) -> None:
         self.hour = int(m.group(1))
         self.minute = int(m.group(2))
         self.second = int(m.group(3))
@@ -98,6 +125,8 @@ class PA1010:
         self.latNS = m.group(6)
         self.lon = m.group(7)
         self.lonEW = m.group(8)
-        self.valid = (m.group(9) == b"1") or (m.group(9) == b"2") 
-        self.satellites = int(m.group(10))
+        # # We don't ever re-check validity. Unclear if it's worth it.
+        # self.valid = (m.group(9) == b"1") or (m.group(9) == b"2")
+        # # We don't use the satillite count for anything. 
+        # self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))
