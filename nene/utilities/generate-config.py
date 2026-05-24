@@ -11,7 +11,7 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-import os, json, sys, random, binascii, machine, time, json
+import os, json, sys, random, binascii, machine, time, json, random
 
 _G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
 
@@ -68,6 +68,10 @@ def _get_input_enc(
 
 
 def _core_config(config: dict) -> None:
+    if "system" not in config:
+        config["system"] = {}
+    suffix = random.randrange(0,9999)
+    config["system"]["name"] = _get_input("system","name",f"Nene{str(suffix)}","Device Name", config)
     if "wifi" not in config:
         config["wifi"] = {}
     config["wifi"]["name"] = _get_input("wifi", "name", "", "Wi-Fi SSID Name", config)
