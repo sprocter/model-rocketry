@@ -54,7 +54,7 @@ module round_corner(diameter) {
     }
 }
 
-coupler_width = 23;
+coupler_width = 22.9;
 bulkhead_inset = 1.8;
 bulkhead_depth = 1.27;
 coupler_length = 50.73 - bulkhead_inset - bulkhead_depth;
@@ -72,33 +72,29 @@ difference() {
     // Hole for MCU
     mcu_width = 18;
     translate([(payload_width - mcu_width)/2, (payload_width - mcu_width)/2, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
-        cube([mcu_width, 35, BOARD_DEPTH+PUNCH_DEPTH*2]);
+        cube([mcu_width, 40, BOARD_DEPTH+PUNCH_DEPTH*2]);
     }
     
     // Holes for sensor block screws
-    translate([5.85, 50, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
+    translate([5.85, 74.395, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
         cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
         translate([12.7, 0, 0]){ // .5"=12.7mm, .5" is from ICM20649 breakout spec... should be right?
             cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
         }
     }
     
-    // Channel for sensor block QWIIC connector
+    // Cutouts for sensor block QWIIC connectors
     channel_width = 6.75; // Measured, the QWIIC connector itself is ~6.33mm
-    translate([(payload_width-channel_width)/2, 15, -BOARD_DEPTH/2+h]){
-        cube([channel_width, 50, BOARD_DEPTH/2]);
+    translate([(payload_width-channel_width)/2, 72, -BOARD_DEPTH/2+h]){
+        cube([channel_width, 8, BOARD_DEPTH/2]);
+    }
+    translate([(payload_width-channel_width)/2, 51, -BOARD_DEPTH/2+h]){
+        cube([channel_width, 5, BOARD_DEPTH/2]);
     }
     
-    // Hole for battery
-    batt_width = 7.25;
-    batt_length = 20;
-    translate([(payload_width - batt_width)/2, 58, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
-        cube([batt_width, batt_length, BOARD_DEPTH+PUNCH_DEPTH*2]);
-    }
-    // Holes for the velcro straps that hold the battery in place
-    translate([0, 70, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
-        velcro_hole();
-        translate([14.5, 0, 0]){
+    // Hole for the velcro strap that holds the battery in place
+    translate([9.5, 42, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
+        rotate([0,0,90]){
             velcro_hole();
         }
     }
@@ -134,13 +130,18 @@ difference() {
     }
 }
 
-ridge_width = 3.6; // Measured. Calculating gives .2"=5.08mm, but that's way too big?
-ridge_length = 19.7; // Measured. Specs give .75"=19.05mm
+ridge_width = 4.5; // Measured. Calculating gives .2"=5.08mm, but that's way too big?
+ridge_length = 11.8;
 ridge_height = 1.67; // Measured.
 
 // Ridge to hold QWIIC Micro sensors strait
-translate([(payload_width-ridge_width)/2, 50-ridge_length, BOARD_DEPTH/2+h]){
-    cube([ridge_width, ridge_length, ridge_height]);
+translate([(payload_width-ridge_width)/2, 76.8-ridge_length, BOARD_DEPTH/2+h]){
+    cube([ridge_width, ridge_length+PUNCH_DEPTH, ridge_height]);
+    translate([10.9,ridge_length,0]){
+        rotate([0,0,90]){
+            cube([ridge_width*.7, ridge_length*1.5, ridge_height]);
+        }
+    }
 }
 
 // Patch gaps caused by corner rounding. This seems like a hack.
@@ -149,4 +150,38 @@ translate([.7,30,-BOARD_DEPTH/2]){
 }
 translate([21.2,30,-BOARD_DEPTH/2]){
     cube([(coupler_width-18)/2-.1, 5, BOARD_DEPTH]); // right side
+}
+
+translate([1,24.7,1]){
+    rotate([0, 45, 0]){
+        cube([2,2,12]);
+    }
+    translate([21.2,0,-1.414]){
+        rotate([0, -45, 0]){
+            cube([2,2,12]);
+        }
+    }
+    translate([8.32,-6,6.5]){
+        difference() {
+            cube([6,8,2]);
+            translate([3,2.25-h,h]){
+                cylinder(h=3, d=2.5);
+            }
+        }
+    }
+}
+
+translate([payload_width/2,payload_width,0]){
+    rotate([90, 0, 0]){
+        difference() {
+            //cylinder(h=payload_width, d=24.1, center=false);
+            translate([0,0,-1]){
+                //cylinder(h=payload_width+2, d=24.0, center=false);
+            }
+        }
+    }
+}
+
+translate([3.2,3.2,0]){
+    //cube([18,21.5,7.5]);
 }
