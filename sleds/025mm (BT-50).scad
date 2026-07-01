@@ -152,7 +152,7 @@ translate([21.2,30,-BOARD_DEPTH/2]){
     cube([(coupler_width-18)/2-.1, 5, BOARD_DEPTH]); // right side
 }
 
-translate([1,24.7,1]){
+translate([1,22.7,1]){
     rotate([0, 45, 0]){
         cube([2,2,12]);
     }
@@ -162,10 +162,35 @@ translate([1,24.7,1]){
         }
     }
     translate([8.32,-6,6.5]){
-        difference() {
-            cube([6,8,2]);
-            translate([3,2.25-h,h]){
-                cylinder(h=3, d=2.5);
+        cube([6,8,2]);
+        translate([3,2.25-h,-1.6]){
+            cylinder(h=3, d=2.1);
+        }
+    }
+}
+
+translate([4,0,0]){
+    cube([2.85, 1.3, 7.5]);
+    translate([0,0,7.5]){
+        cube([2.85, 17, 2]);
+        translate([0,17,0]){
+            rotate([0,0,-45]){
+                cube([2.85, 8, 2]);
+            }
+        }
+    }
+}
+translate([payload_width, 0, 0]){
+    mirror([1, 0, 0]){
+        translate([4,0,0]){
+            cube([2.85, 1.3, 7.5]);
+            translate([0,0,7.5]){
+                cube([2.85, 17, 2]);
+                translate([0,17,0]){
+                    rotate([0,0,-45]){
+                        cube([2.85, 8, 2]);
+                    }
+                }
             }
         }
     }
