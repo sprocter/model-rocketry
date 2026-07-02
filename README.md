@@ -19,6 +19,66 @@ That said, if you want glance at the code, it's all open-source and there are al
 5. The measurements are also integrated into a full [Attitude and Heading Reference System](https://en.wikipedia.org/wiki/Attitude_and_heading_reference_system).
 6. Help finding your rocket with GPS and long-range radio.
 
+### Outputs
+
+The computer must be powered up and loaded in your rocket before you launch it. After it lands, it will broadcast its location (and maximum altitude). Once you retrieve your rocket, the computer will have a (compressed) .csv file with lots of information about the flight:
+
+* Acceleration in X, Y, and Z axes
+* Rotation in X, Y, and Z axes
+* Magnetic field strength in X, Y, and Z axes
+* Altitude, derived from barometric pressure and GPS
+    * Note: GPS altitude readings are pretty buggy. I wouldn't use them for much.
+* Ambient temperature
+* Latitude and longitude
+* Estimated yaw, pitch, roll, altitude, and speed 
+    * These estimates assume the rocket is pointed up and hasn't had its ejection charge fire yet -- they're not valid once the rocket separates.
+
+The first line of the file has some extra metadata:
+
+* The user-provided name of the computer
+    * This is helpful if you have several and want to know which generated a particular file
+* Time and date of launch
+* Battery level and initialization and touchdown
+* Computer temperature at initialization and touchdown
+
+If you're curious, you can see an example [.csv file here](example-output.csv). This was my Level 1 certification flight, recorded on a LOC-IV using an Aerotech H148R.
+
+With this data, you can calculate whatever sort of thing you might be interested in. For example, here's a nice summary I generate using a spreadsheet:
+
+| Condor                              | Saturday, June 13, 2026 | 11:52:03 AM |       |
+|-------------------------------------|-------------------------|-------------|-------|
+|                                     | SI                      | Imperial    |       |
+| Maximum:                            |                         |             |       |
+| … Altitude (m, ft)                  | 528.93                  | 1,735.34    |       |
+| … Velocity (m/s, mph)               | 131.66                  | 294.52      |       |
+| … Acceleration (m/s2, g)            | 132.83                  | 13.54       |       |
+|                                     |                         |             |       |
+| Velocity:                           |                         |             |       |
+| … Off Rod (1m) (m/s, mph)           | 15.77                   | 35.28       |       |
+| … at Ejection Charge (m/s, mph)     | 17.05                   | 38.13       |       |
+| … Descent (Average) (m/s, mph)      | 6.01                    | 13.44       |       |
+|                                     |                         |             |       |
+| Altitude at Ejection Charge (m, ft) | 523.99                  | 1,719.12    |       |
+| Launch – Burnout duration (Stages)  | 00:01.51                |             |       |
+| Launch – Ejection Charge duration   | 00:07.88                |             |       |
+| Descent duration                    | 01:28.38                |             |       |
+|                                     |                         |             |       |
+| Frame Time (Avg, StdDev)            | 22.22                   | 0.42        |       |
+| Frame Time (95th %, 99th %, Worst)  | 23.00                   | 23.00       | 23.00 |
+| Battery Level (Start, End)          | 93.86                   | 87.35       |       |
+| MCU Temp (Start, End) (°C)          | 28                      | 38          |       |
+
+You can also graph any or all of the information over time:
+
+![Example Graph](example-graph.png "An example graph showing a few measured values")
+
+### Why the name "Nene"?
+
+The name comes from one of my favorite books, ["Blackouts" by Justin Torres](https://us.macmillan.com/books/9781250338068/blackouts/). [Wikipedia](https://en.wikipedia.org/wiki/Nene_(name)) explains that:
+> In Spanish, [Nene] is generally a masculine term of endearment and an affectionate nickname meaning "baby".
+
+I believe it also a [type of goose](https://en.wikipedia.org/wiki/Nene_(bird)).
+
 ## The Payload-Bay Sleds
 
 The "sleds" are [OpenSCAD](https://openscad.org/) files that you can tweak as necessary and then print with a 3D printer. If you use an "Aero" filament, they should be pretty light, but still relatively sturdy. They provide a grid-type arrangement (patterned after [this product](https://www.adafruit.com/product/5774)) that lets you easily and securely mount breakout boards (or anything with mounting holes) using M2.5 nylon screws.
