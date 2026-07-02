@@ -54,7 +54,41 @@ module round_corner(diameter) {
     }
 }
 
-coupler_width = 22.9;
+module brace_arm() {
+    translate([4,0,0]){
+        cube([2.85, 1.3, 7.5]);
+        translate([0,0,7.5]){
+            cube([2.85, 17, 2]);
+            translate([0,17,0]){
+                rotate([0,0,-45]){
+                    cube([2.85, 8, 2]);
+                }
+            }
+        }
+    }
+}
+
+module mcu_brace() {
+    // top square and peg
+    translate([9.32,16.7,7.5]){
+        cube([6,8,2]);
+        translate([3,2.25-h,-1.6]){
+            cylinder(h=3, d=2.1);
+        }
+    }
+
+    // Right brace
+    brace_arm();
+
+    // Left brace
+    translate([payload_width, 0, 0]){
+        mirror([1, 0, 0]){
+            brace_arm();
+        }
+    }
+}
+
+coupler_width = 22.7;
 bulkhead_inset = 1.8;
 bulkhead_depth = 1.27;
 coupler_length = 50.73 - bulkhead_inset - bulkhead_depth;
@@ -88,8 +122,15 @@ difference() {
     translate([(payload_width-channel_width)/2, 72, -BOARD_DEPTH/2+h]){
         cube([channel_width, 8, BOARD_DEPTH/2]);
     }
-    translate([(payload_width-channel_width)/2, 51, -BOARD_DEPTH/2+h]){
-        cube([channel_width, 5, BOARD_DEPTH/2]);
+    translate([(payload_width-channel_width)/2, 48, -BOARD_DEPTH/2+h]){
+        cube([channel_width, 8, BOARD_DEPTH/2]);
+    }
+    
+    // Cutout for the B2B connector
+    b2b_length = 8.65;
+    b2b_width = 2.9;
+    translate([10,b2b_width/2,-2]){
+        cube([b2b_length, b2b_width, BOARD_DEPTH + 2]);
     }
     
     // Hole for the velcro strap that holds the battery in place
@@ -108,7 +149,7 @@ difference() {
             round_corner(4); // Top left (MCU) corner
         }
     }
-    translate([coupler_width-1.3-PUNCH_DEPTH,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
+    translate([coupler_width-1.1-PUNCH_DEPTH,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
         rotate(a = 180, v=[0, 0, 180]){
             round_corner(4); // Bottom left (battery) corner
         }
@@ -118,12 +159,12 @@ difference() {
             round_corner(4); // Bottom right (battery) corner
         }
     }
-    translate([.7,payload_length-1,-BOARD_DEPTH/2]){
+    translate([.7,payload_length-.7,-BOARD_DEPTH/2]){
         rotate(a = 270, v=[0, 0, 180]){
             round_corner(1.4); // Middle right (shoulder) corner
         }
     }
-    translate([coupler_width+.6, payload_length-1,-BOARD_DEPTH/2]){
+    translate([coupler_width+.9, payload_length-.7,-BOARD_DEPTH/2]){
         rotate(a = 180, v=[0, 0, 180]){
             round_corner(1.4); // Middle left (shoulder) corner
         }
@@ -134,7 +175,7 @@ ridge_width = 4.5; // Measured. Calculating gives .2"=5.08mm, but that's way too
 ridge_length = 11.8;
 ridge_height = 1.67; // Measured.
 
-// Ridge to hold QWIIC Micro sensors strait
+// Ridge to hold QWIIC Micro sensors straighst
 translate([(payload_width-ridge_width)/2, 76.8-ridge_length, BOARD_DEPTH/2+h]){
     cube([ridge_width, ridge_length+PUNCH_DEPTH, ridge_height]);
     translate([10.9,ridge_length,0]){
@@ -145,68 +186,29 @@ translate([(payload_width-ridge_width)/2, 76.8-ridge_length, BOARD_DEPTH/2+h]){
 }
 
 // Patch gaps caused by corner rounding. This seems like a hack.
-translate([.7,30,-BOARD_DEPTH/2]){
+translate([.85,30,-BOARD_DEPTH/2]){
     cube([(coupler_width-18)/2, 5, BOARD_DEPTH]); // right side
 }
 translate([21.2,30,-BOARD_DEPTH/2]){
     cube([(coupler_width-18)/2-.1, 5, BOARD_DEPTH]); // right side
 }
 
-translate([1,22.7,1]){
-    rotate([0, 45, 0]){
-        cube([2,2,12]);
-    }
-    translate([21.2,0,-1.414]){
-        rotate([0, -45, 0]){
-            cube([2,2,12]);
-        }
-    }
-    translate([8.32,-6,6.5]){
-        cube([6,8,2]);
-        translate([3,2.25-h,-1.6]){
-            cylinder(h=3, d=2.1);
-        }
-    }
-}
+mcu_brace();
 
-translate([4,0,0]){
-    cube([2.85, 1.3, 7.5]);
-    translate([0,0,7.5]){
-        cube([2.85, 17, 2]);
-        translate([0,17,0]){
-            rotate([0,0,-45]){
-                cube([2.85, 8, 2]);
-            }
-        }
-    }
-}
-translate([payload_width, 0, 0]){
-    mirror([1, 0, 0]){
-        translate([4,0,0]){
-            cube([2.85, 1.3, 7.5]);
-            translate([0,0,7.5]){
-                cube([2.85, 17, 2]);
-                translate([0,17,0]){
-                    rotate([0,0,-45]){
-                        cube([2.85, 8, 2]);
-                    }
-                }
-            }
-        }
-    }
-}
-
+/*
+// Payload model
 translate([payload_width/2,payload_width,0]){
     rotate([90, 0, 0]){
         difference() {
-            //cylinder(h=payload_width, d=24.1, center=false);
+            cylinder(h=payload_width, d=24.1, center=false);
             translate([0,0,-1]){
-                //cylinder(h=payload_width+2, d=24.0, center=false);
+                cylinder(h=payload_width+2, d=24.0, center=false);
             }
         }
     }
 }
-
+// MCU and radio model
 translate([3.2,3.2,0]){
-    //cube([18,21.5,7.5]);
+    cube([18,21.5,7.5]);
 }
+*/
