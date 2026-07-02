@@ -88,11 +88,11 @@ module mcu_brace() {
     }
 }
 
-coupler_width = 22.7;
+coupler_width = 21;
 bulkhead_inset = 1.8;
 bulkhead_depth = 1.27;
 coupler_length = 50.73 - bulkhead_inset - bulkhead_depth;
-payload_width = 24.4;
+payload_width = 23.4;
 nosecone_shoulder = 18.85;
 payload_length = 51.16 - nosecone_shoulder;
 
@@ -110,7 +110,7 @@ difference() {
     }
     
     // Holes for sensor block screws
-    translate([5.85, 74.395, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
+    translate([5.35, 74.395, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
         cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
         translate([12.7, 0, 0]){ // .5"=12.7mm, .5" is from ICM20649 breakout spec... should be right?
             cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
@@ -126,15 +126,8 @@ difference() {
         cube([channel_width, 8, BOARD_DEPTH/2]);
     }
     
-    // Cutout for the B2B connector
-    b2b_length = 8.65;
-    b2b_width = 2.9;
-    translate([10,b2b_width/2,-2]){
-        cube([b2b_length, b2b_width, BOARD_DEPTH + 2]);
-    }
-    
     // Hole for the velcro strap that holds the battery in place
-    translate([9.5, 42, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
+    translate([(coupler_width-2.54)/2, 42, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
         rotate([0,0,90]){
             velcro_hole();
         }
@@ -149,12 +142,12 @@ difference() {
             round_corner(4); // Top left (MCU) corner
         }
     }
-    translate([coupler_width-1.1-PUNCH_DEPTH,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
+    translate([coupler_width-.8-PUNCH_DEPTH,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
         rotate(a = 180, v=[0, 0, 180]){
             round_corner(4); // Bottom left (battery) corner
         }
     }
-    translate([2.7,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
+    translate([3.2,payload_length+coupler_length-2,-BOARD_DEPTH/2]){
         rotate(a = 270, v=[0, 0, 180]){
             round_corner(4); // Bottom right (battery) corner
         }
@@ -164,7 +157,7 @@ difference() {
             round_corner(1.4); // Middle right (shoulder) corner
         }
     }
-    translate([coupler_width+.9, payload_length-.7,-BOARD_DEPTH/2]){
+    translate([coupler_width+1.6, payload_length-.7,-BOARD_DEPTH/2]){
         rotate(a = 180, v=[0, 0, 180]){
             round_corner(1.4); // Middle left (shoulder) corner
         }
@@ -186,11 +179,11 @@ translate([(payload_width-ridge_width)/2, 76.8-ridge_length, BOARD_DEPTH/2+h]){
 }
 
 // Patch gaps caused by corner rounding. This seems like a hack.
-translate([.85,30,-BOARD_DEPTH/2]){
+translate([1.2,30,-BOARD_DEPTH/2]){
     cube([(coupler_width-18)/2, 5, BOARD_DEPTH]); // right side
 }
-translate([21.2,30,-BOARD_DEPTH/2]){
-    cube([(coupler_width-18)/2-.1, 5, BOARD_DEPTH]); // right side
+translate([20.7,30,-BOARD_DEPTH/2]){
+    cube([(coupler_width-18)/2-.1, 5, BOARD_DEPTH]); // left side
 }
 
 mcu_brace();
