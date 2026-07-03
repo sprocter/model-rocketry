@@ -55,9 +55,9 @@ module round_corner(diameter) {
 }
 
 module brace_arm() {
-    translate([4,0,0]){
-        cube([2.85, 1.3, 7.5]);
-        translate([0,0,7.5]){
+    translate([4,-1,-1]){
+        cube([2.85, 2.3, 10.5]);
+        translate([0,1,8.5]){
             cube([2.85, 17, 2]);
             translate([0,17,0]){
                 rotate([0,0,-45]){
@@ -70,7 +70,7 @@ module brace_arm() {
 
 module mcu_brace() {
     // top square and peg
-    translate([9.32,16.7,7.5]){
+    translate([8.67,16.7,7.5]){
         cube([6,8,2]);
         translate([3,2.25-h,-1.6]){
             cylinder(h=3, d=2.1);
