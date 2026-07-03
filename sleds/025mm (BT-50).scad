@@ -55,7 +55,7 @@ module round_corner(diameter) {
 }
 
 module brace_arm() {
-    translate([4,-1,-1]){
+    translate([3.35,-1,-1]){
         cube([2.85, 2.3, 10.5]);
         translate([0,1,8.5]){
             cube([2.85, 17, 2]);
@@ -106,7 +106,17 @@ difference() {
     // Hole for MCU
     mcu_width = 18;
     translate([(payload_width - mcu_width)/2, (payload_width - mcu_width)/2, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
-        cube([mcu_width, 40, BOARD_DEPTH+PUNCH_DEPTH*2]);
+        difference(){
+            cube([mcu_width, 40, BOARD_DEPTH+PUNCH_DEPTH*2]);
+            difference() {
+                translate([0,28,0]){
+                    cube([mcu_width, 12, BOARD_DEPTH+PUNCH_DEPTH*2]);
+                }
+                translate([.5,28+h,0]){
+                    cube([mcu_width-1, 12, BOARD_DEPTH+PUNCH_DEPTH*2]);
+                }
+            }
+        }
     }
     
     // Holes for sensor block screws
