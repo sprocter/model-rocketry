@@ -69,6 +69,7 @@ def monitor_charging():
 
     _MAX17048_ADDR = const(0x36)
 
+    _MAX17048_VCELL = const(0x02)
     _MAX17048_SOC = const(0x04)
     _MAX17048_CRATE = const(0x16)
 
@@ -78,10 +79,13 @@ def monitor_charging():
         soc = i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_SOC, 2)
         charge_percent = (unpack(">H", soc)[0]) / 256.0
 
+        voltage = i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_VCELL, 2)
+        charge_voltage = (unpack(">H", voltage)[0]) * 7.8125e-05
+
         rate = i2c.readfrom_mem(_MAX17048_ADDR, _MAX17048_CRATE, 2)
         charge_rate = (unpack(">h", rate)[0]) * 0.208
 
-        print(f"Battery is at {charge_percent}%, charging at {charge_rate}%/hr.")
+        print(f"Battery is at {charge_percent}% ({charge_voltage}v), charging at {charge_rate}%/hr.")
         time.sleep(5)
 
 
