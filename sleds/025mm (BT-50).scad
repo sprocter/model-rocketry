@@ -88,10 +88,11 @@ module mcu_brace() {
     }
 }
 
+shrink = 5;
 coupler_width = 21;
 bulkhead_inset = 1.8;
 bulkhead_depth = 1.27;
-coupler_length = 50.73 - bulkhead_inset - bulkhead_depth;
+coupler_length = 50.73 - bulkhead_inset - bulkhead_depth - shrink;
 payload_width = 23.4;
 nosecone_shoulder = 18.85;
 payload_length = 51.16 - nosecone_shoulder;
@@ -107,20 +108,20 @@ difference() {
     mcu_width = 18;
     translate([(payload_width - mcu_width)/2, (payload_width - mcu_width)/2, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
         difference(){
-            cube([mcu_width, 40, BOARD_DEPTH+PUNCH_DEPTH*2]);
+            cube([mcu_width, 40-shrink, BOARD_DEPTH+PUNCH_DEPTH*2]);
             difference() {
                 translate([0,28,0]){
-                    cube([mcu_width, 12, BOARD_DEPTH+PUNCH_DEPTH*2]);
+                    cube([mcu_width, 12-shrink, BOARD_DEPTH+PUNCH_DEPTH*2]);
                 }
                 translate([.5,28+h,0]){
-                    cube([mcu_width-1, 12, BOARD_DEPTH+PUNCH_DEPTH*2]);
+                    cube([mcu_width-1, 12-shrink, BOARD_DEPTH+PUNCH_DEPTH*2]);
                 }
             }
         }
     }
     
     // Holes for sensor block screws
-    translate([5.35, 74.395, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
+    translate([5.35, 74.395-shrink, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){ // 5.85 determined by measuring in the render
         cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
         translate([12.7, 0, 0]){ // .5"=12.7mm, .5" is from ICM20649 breakout spec... should be right?
             cylinder(h=BOARD_DEPTH + 2* PUNCH_DEPTH, d=2.5);
@@ -129,17 +130,32 @@ difference() {
     
     // Cutouts for sensor block QWIIC connectors
     channel_width = 6.75; // Measured, the QWIIC connector itself is ~6.33mm
-    translate([(payload_width-channel_width)/2, 72, -BOARD_DEPTH/2+h]){
+    translate([(payload_width-channel_width)/2, 72-shrink, -BOARD_DEPTH/2+h]){
         cube([channel_width, 8, BOARD_DEPTH/2]);
     }
-    translate([(payload_width-channel_width)/2, 48, -BOARD_DEPTH/2+h]){
+    translate([(payload_width-channel_width)/2, 48-shrink, -BOARD_DEPTH/2+h]){
         cube([channel_width, 8, BOARD_DEPTH/2]);
     }
     
     // Hole for the velcro strap that holds the battery in place
-    translate([(coupler_width-2.54)/2, 42, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
+    translate([(coupler_width-2.54)/2, 42-shrink, -1 * BOARD_DEPTH / 2-PUNCH_DEPTH]){
         rotate([0,0,90]){
             velcro_hole();
+        }
+    }
+    
+    // Power cable slots
+    translate([8,1.25,-1+h]){
+        cube([1.5,1.5,1.5]);
+        translate([3,0,0]){
+            cube([1.5,1.5,1.5]);
+        }
+    }
+    
+    // I2C slot
+    translate([1.25,0,-2.5]){
+        rotate([-45,0,0]){
+            cube([1.5,5,10]);
         }
     }
     
@@ -179,7 +195,7 @@ ridge_length = 11.8;
 ridge_height = 1.67; // Measured.
 
 // Ridge to hold QWIIC Micro sensors straighst
-translate([(payload_width-ridge_width)/2, 76.8-ridge_length, BOARD_DEPTH/2+h]){
+translate([(payload_width-ridge_width)/2, 76.8-ridge_length-shrink, BOARD_DEPTH/2+h]){
     cube([ridge_width, ridge_length+PUNCH_DEPTH, ridge_height]);
     translate([10.9,ridge_length,0]){
         rotate([0,0,90]){
