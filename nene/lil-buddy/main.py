@@ -24,7 +24,7 @@ from icm20649 import ICM20649
 from ism330dhcx import ISM330DHCX
 from mmc5983ma import MMC5983MA
 from max17048 import MAX17048
-from pa1010 import PA1010
+from gps import GPS
 from sx1262 import SX1262
 from marg import StateEstimator
 
@@ -166,8 +166,8 @@ def button_handler(boot_button: Pin) -> None:
 def enable_buzzer() -> None:
     global p1, p2
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
-    p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
-    p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(buzzer_1_pin), freq=5200, duty_u16=32768)
+    p2 = PWM(Pin(buzzer_2_pin), freq=5200, duty_u16=32768, invert=True)
 
 
 def enable_sensor_recording() -> None:
@@ -371,17 +371,17 @@ def _init_radio(config: dict):
     global msg_header, msg_id
 
     spi_bus = 1
-    clk = 36
-    mosi = 35
-    miso = 37
-    cs = 5
-    irq = 6  # "DIO1"
-    rst = 44
-    gpio = 43  # "Busy"
+    clk = config["pins"]["spi_clk"]
+    mosi = config["pins"]["spi_mosi"]
+    miso = config["pins"]["spi_miso"]
+    cs = config["pins"]["lora_cs"]
+    irq = config["pins"]["lora_dio1"] 
+    rst = config["pins"]["lora_rst"]
+    gpio = config["pins"]["lora_busy"]
 
     radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
 
-    frequency = 917.0
+    frequency = config["lora"]["freq"]
     bandwidth = 125
     spreading_factor = 10
     coding_rate = 8
@@ -418,7 +418,7 @@ def _init_radio(config: dict):
 
 def _init_devices(config: dict) -> None:
     global accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED
-    i2c = I2C(scl=9, sda=8)
+    i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
 
     if BMP581.ADDR in connected_devices:
@@ -433,7 +433,7 @@ def _init_devices(config: dict) -> None:
     else:
         raise OSError(f"No magnetometer connected!")
 
-    gps = PA1010(16, 15)
+    gps = GPS(config["pins"]["uart_tx"], config["pins"]["uart_rx"], config["system"]["gps_pmtk_cmds"])
     gps.initialize()
 
     # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g,
@@ -504,7 +504,7 @@ def _init_board():
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin
 
     mode = _MODE_INITIALIZE
 
@@ -529,6 +529,9 @@ def initialize():
     alti.read_raw()
     initial_altitude = alti.decode_alti(alti.buffer)
     apogee = 0.0
+
+    buzzer_1_pin = config["pins"]["buzzer1"]
+    buzzer_2_pin = config["pins"]["buzzer2"]
 
     npxl_on = True
 

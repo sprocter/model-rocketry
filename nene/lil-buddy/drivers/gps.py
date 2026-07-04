@@ -25,18 +25,18 @@ from machine import UART
 import time, gc, machine
 import re
 
-GGA_DECODE = re.compile(
+_GGA_DECODE = re.compile(
     r"\$GNGGA,(\d\d)(\d\d)(\d\d)\.(\d\d\d),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),(\d),(\d+),[^,]+,([0-9.]+),"
 )
 
-RMC_DECODE = re.compile(
+_RMC_DECODE = re.compile(
     r"\$GNRMC,(\d\d)(\d\d)(\d\d)\.(\d\d\d),([AV]),(\d+\.\d+),([NS]),(\d+\.\d+),([EW]),([0-9.]+),([0-9.]+),(\d\d)(\d\d)(\d\d),"
 )
 
 
-class PA1010:
+class GPS:
 
-    def __init__(self, uart_tx, uart_rx):
+    def __init__(self, uart_tx:int, uart_rx:int, use_pmtk_cmds:bool):
         self.tx = uart_tx
         self.rx = uart_rx
         self.buffer = b""
@@ -47,31 +47,43 @@ class PA1010:
         self.lat = 0.0
         self.lon = 0.0
 
+        # True if we should use PMTK commands, false if we use PCAS
+        self.pmtk = use_pmtk_cmds
+
         self.uart = UART(1, baudrate=9600, tx=uart_tx, rx=uart_rx)
 
     def initialize(self) -> None:
         # Increase the baud rate to the maximum
-        self._send_command("PMTK251,115200")
+        if(self.pmtk):
+            self._send_command("PMTK251,115200")
+        else:
+            self._send_command("PCAS01,5")
         # Re initialize the UART to use the higher baud rate
         self.uart.init(baudrate=115200, tx=self.tx, rx=self.rx)
         # The UART seems to need a hot sec to reinitialize...
-        # Get a new fix every 100 ms
-        self._send_command("PMTK220,100")
+        # Get a new fix as fast as we can
+        if(self.pmtk):
+            self._send_command("PMTK220,100") # MT3333 can do 10Hz
+        else:
+            self._send_command("PCAS02,200") # L76K can only do 5Hz
         time.sleep_ms(100)
         # Get "recommended minimum" every update
-        self._send_command("PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
-        time.sleep_ms(100)
+        if(self.pmtk):
+            self._send_command("PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        else:
+            self._send_command("PCAS03,0,0,0,0,1,0,0,0,0,0,,,0,0")
+        time.sleep_ms(200)
 
     def read_raw(self):
         self.buffer = self.uart.readline()
 
     def decode_reading(self, reading: bytearray) -> None:
         if self.init_done and reading is not None:
-            m = GGA_DECODE.match(reading)
+            m = _GGA_DECODE.match(reading)
             if m is not None:
                 self._set_data_from_gga(m)
         elif not self.init_done and reading is not None:
-            m = RMC_DECODE.match(reading)
+            m = _RMC_DECODE.match(reading)
             if m is not None:
                 self._set_data_from_rmc(m)
 
@@ -103,7 +115,6 @@ class PA1010:
     def _set_data_from_rmc(self, m) -> None:
         if (m.group(5) != b"A"):
             return
-        self.valid = True
         self.hour = int(m.group(1))
         self.minute = int(m.group(2))
         self.second = int(m.group(3))
@@ -113,7 +124,10 @@ class PA1010:
         self.month = int(m.group(13))
         self.year = 2000+int(m.group(14))
         # Switch to just getting "fix data" every update
-        self._send_command("PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        if(self.pmtk):
+            self._send_command("PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0")
+        else:
+            self._send_command("PCAS03,1,0,0,0,0,0,0,0,0,0,,,0,0")
         self.init_done = True
 
     def _set_data_from_gga(self, m) -> None:
@@ -125,8 +139,7 @@ class PA1010:
         self.latNS = m.group(6)
         self.lon = m.group(7)
         self.lonEW = m.group(8)
-        # # We don't ever re-check validity. Unclear if it's worth it.
-        # self.valid = (m.group(9) == b"1") or (m.group(9) == b"2")
+        self.valid = (m.group(9) == b"1") or (m.group(9) == b"2")
         # # We don't use the satillite count for anything. 
         # self.satellites = int(m.group(10))
         self.altitude = float(m.group(11))

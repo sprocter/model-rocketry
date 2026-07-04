@@ -92,6 +92,13 @@ def _core_config(config: dict) -> None:
         "Big-Buddy Address (0-255)",
         config,
     )
+    config["lora"]["freq"] = float(_get_input_int(
+        "lora",
+        "freq",
+        random.randint(902, 928),
+        "LoRa Frequency (902-928)",
+        config,
+    ))
     config["lora"]["key"] = _get_input_enc(
         "lora", "key", 256, "Encryption Key (256 bit, hexlified bytes)", config
     )
@@ -302,11 +309,49 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     config["ADXL375"]["ACC_Z_ERR"] = sum(zs) / len(zs)
 
 
+def _configure_pins(config: dict) -> None:
+    config["pins"] = {}
+    if(len((machine.I2C(scl=9, sda=8)).scan()) > 0):
+        # FeatherS3D config
+        config["pins"]["i2c_scl"] = 9
+        config["pins"]["i2c_sda"] = 8
+        config["pins"]["uart_tx"] = 16
+        config["pins"]["uart_rx"] = 15
+        config["pins"]["buzzer1"] = 17
+        config["pins"]["buzzer2"] = 18
+        config["pins"]["spi_clk"] = 36
+        config["pins"]["spi_mosi"] = 35
+        config["pins"]["spi_miso"] = 37
+        config["pins"]["lora_cs"] = 5
+        config["pins"]["lora_dio1"] = 6
+        config["pins"]["lora_rst"] = 44
+        config["pins"]["lora_busy"] = 43
+        config["system"]["gps_pmtk_cmds"] = True
+    elif(len((machine.I2C(scl=6, sda=5)).scan()) > 0):
+        # Xiao ESP32S3 Plus config
+        config["pins"]["i2c_scl"] = 6
+        config["pins"]["i2c_sda"] = 5
+        config["pins"]["uart_tx"] = 43
+        config["pins"]["uart_rx"] = 44
+        config["pins"]["buzzer1"] = 1
+        config["pins"]["buzzer2"] = 2
+        config["pins"]["spi_clk"] = 7
+        config["pins"]["spi_mosi"] = 9
+        config["pins"]["spi_miso"] = 8
+        config["pins"]["lora_cs"] = 41
+        config["pins"]["lora_dio1"] = 39
+        config["pins"]["lora_rst"] = 42
+        config["pins"]["lora_busy"] = 40 
+        config["system"]["gps_pmtk_cmds"] = False   
+    else:
+        print("FATAL ERROR: No Devices found on the I2C bus.")
+
 def _part_2(config: dict) -> None:
     print("")
-    print("Part 2: Sensor Calibration")
+    print("Part 2: Device Calibration")
     print("--------------------------")
-    i2c = machine.I2C(scl=9, sda=8)
+    _configure_pins(config)
+    i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
     print(f"There are {len(connected_devices)} devices connected:")
     for dev in connected_devices:
@@ -360,7 +405,7 @@ def _test_AHRS() -> None:
     else:
         duration = int(duration)
 
-    i2c = machine.I2C(scl=9, sda=8)
+    i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
     alti = BMP581(i2c)
     if ADXL375.ADDR in connected_devices:
@@ -419,15 +464,15 @@ def _send_lora_msg() -> None:
 
     inp = float(input("Input a floating-point number to send to the Big Buddy: "))
     spi_bus = 1
-    clk = 36
-    mosi = 35
-    miso = 37
-    cs = 5
-    irq = 6  # "DIO1"
-    rst = 44
-    gpio = 43  # "Busy"
+    clk = config["pins"]["spi_clk"]
+    mosi = config["pins"]["spi_mosi"]
+    miso = config["pins"]["spi_miso"]
+    cs = config["pins"]["lora_cs"]
+    irq = config["pins"]["lora_dio1"] 
+    rst = config["pins"]["lora_rst"]
+    gpio = config["pins"]["lora_busy"]
     radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
-    frequency = 917.0
+    frequency = config["lora"]["freq"]
     bandwidth = 125
     spreading_factor = 10
     coding_rate = 8
@@ -497,8 +542,8 @@ def _test_beeper() -> None:
         duration = default
     else:
         duration = int(duration)
-    p1 = PWM(Pin(17), freq=5200, duty_u16=32768)
-    p2 = PWM(Pin(18), freq=5200, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(config["pins"]["buzzer1"] ), freq=5200, duty_u16=32768)
+    p2 = PWM(Pin(config["pins"]["buzzer2"] ), freq=5200, duty_u16=32768, invert=True)
     while duration > 0:
         if p1.freq() == 5198:
             p1.freq(1800)
@@ -513,9 +558,9 @@ def _test_beeper() -> None:
 
 
 def _print_gps() -> None:
-    from pa1010 import PA1010
+    from gps import GPS
 
-    gps = PA1010(16, 15)
+    gps = GPS(config["pins"]["uart_tx"], config["pins"]["uart_rx"], config["system"]["gps_pmtk_cmds"])
     gps.initialize()
 
     default = 5
@@ -547,7 +592,7 @@ def _print_gps() -> None:
     londd = int(lon[0:3])
     lonmm = float(lon[3:])
     print(
-        f"Your location is {latdd}°{latmm}{str(gps.latNS.decode("UTF-8"))} {londd}°{lonmm}{str(gps.lonEW.decode("UTF-8"))}"
+        f"Your location is {latdd}°{latmm}{str(gps.latNS.decode("UTF-8"))} {londd}°{lonmm}{str(gps.lonEW.decode("UTF-8"))}. It is {gps.year}-{gps.month:02d}-{gps.day:02d}T{gps.hour:02d}:{gps.minute:02d}:{gps.second:02d} UTC."
     )
 
 
