@@ -522,7 +522,7 @@ def initialize():
 
     initial_batt_soc = batt_monitor.charge_percent
 
-    estimator = StateEstimator(_PERIOD, alti.error, accel.error)
+    estimator = StateEstimator(_PERIOD, alti.error, accel.error, config["orient"]["transpose"], config["orient"]["invert"])
 
     gps_reading_count = 0
     reading_num = 0  # _LAUNCHPAD_READINGS + 1

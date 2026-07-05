@@ -23,7 +23,7 @@ class StateEstimator:
     # Roll, pitch, and yaw are oriented according to this layout: 
     # https://www1.grc.nasa.gov/wp-content/uploads/rotations.gif
 
-    def __init__(self, period: float, accel_err: float, alti_err: float):
+    def __init__(self, period: float, accel_err: float, alti_err: float, transpose: tuple(int, int, int), invert: tuple(bool, bool, bool)):
         """Initialize the estimator
 
         This initializes a Kalman filter using the supplied timestep and errors (as standard deviations)
@@ -31,6 +31,8 @@ class StateEstimator:
         :param float period: The time between readings in milliseconds
         :param float alti_err: The standard deviation of altimeter readings in meters
         :param float accel_err: The standard deviation of accelerometer readings in meters per second per second
+        :param tuple(int, int, int) transpose: Transposition of axes, see orientate.py for details
+        :param tuple(bool, bool, bool) invert: Inversion of axes, see orientate.py for details
         """
         self.KF = KalmanFilter(period / 1000, accel_err, alti_err)
         # self.transpose = (1, 2, 0)  # Y -> Z, Z -> X, X -> Y
@@ -39,6 +41,8 @@ class StateEstimator:
         self.acceleration = [0.0, 0.0, 0.0]
         self.gyroscope = [0.0, 0.0, 0.0]
         self.magnetometer = [0.0, 0.0, 0.0]
+        self.transpose = transpose
+        self.invert = invert
         self.fuse = Fusion()
 
     @property
@@ -88,10 +92,10 @@ class StateEstimator:
         )  # TODO: Should we use more than the X value? Adjust for pitch?
         self.KF.update(value)
         self.fuse.update(
-            orientate((2, 1, 0), (False, False, False), self.acceleration)[0],
+            orientate(self.transpose, self.invert, self.acceleration)[0],
             # The fusion module seems to want the Z axis to spin the other way
-            orientate((2, 1, 0), (True, True, False), self.gyroscope)[0],
-            orientate((2, 1, 0), (False, False, False), self.magnetometer)[0],
+            orientate(self.transpose, tuple((x or y) for x,y in zip(self.invert, (True, True, False))), self.gyroscope)[0],
+            orientate(self.transpose, self.invert, self.magnetometer)[0],
         )
 
     @acceleration.setter

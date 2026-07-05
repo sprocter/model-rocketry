@@ -311,6 +311,7 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
 
 def _configure_pins(config: dict) -> None:
     config["pins"] = {}
+    config["orient"] = {}
     if(len((machine.I2C(scl=9, sda=8)).scan()) > 0):
         # FeatherS3D config
         config["pins"]["i2c_scl"] = 9
@@ -327,6 +328,8 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_rst"] = 44
         config["pins"]["lora_busy"] = 43
         config["system"]["gps_pmtk_cmds"] = True
+        config["orient"]["transpose"] = (2,1,0)
+        config["orient"]["invert"] = (False,False,False)
     elif(len((machine.I2C(scl=6, sda=5)).scan()) > 0):
         # Xiao ESP32S3 Plus config
         config["pins"]["i2c_scl"] = 6
@@ -342,7 +345,9 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_dio1"] = 39
         config["pins"]["lora_rst"] = 42
         config["pins"]["lora_busy"] = 40 
-        config["system"]["gps_pmtk_cmds"] = False   
+        config["system"]["gps_pmtk_cmds"] = False
+        config["orient"]["transpose"] = (1,2,0)
+        config["orient"]["invert"] = (False,True,False)
     else:
         print("FATAL ERROR: No Devices found on the I2C bus.")
 
@@ -438,7 +443,7 @@ def _test_AHRS() -> None:
     mag = MMC5983MA(i2c)
     alti.initialize()
     mag.initialize(config["MMC5983MA"])
-    estimator = StateEstimator(23, alti.error, accel.error)
+    estimator = StateEstimator(23, alti.error, accel.error, config["orient"]["transpose"], config["orient"]["invert"])
     start_ts = time.ticks_ms()
     i = 0
     while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
