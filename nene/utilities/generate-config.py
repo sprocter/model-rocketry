@@ -226,8 +226,15 @@ def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
         time.sleep_ms(23)
 
     config["ICM20649"] = {}
-    config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs) - _G_TO_MS2
-    config["ICM20649"]["ACC_Y_ERR"] = sum(acc_ys) / len(acc_ys)
+    if(config["orient"]["transpose"] == (2,1,0)):
+        config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs) - _G_TO_MS2
+        config["ICM20649"]["ACC_Y_ERR"] = sum(acc_ys) / len(acc_ys)
+    elif(config["orient"]["transpose"] == (2,0,1)):
+        config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs) 
+        config["ICM20649"]["ACC_Y_ERR"] = sum(acc_ys) / len(acc_ys) + _G_TO_MS2
+    else:
+        print("FATAL ERROR: Attempting to calibrate ICM20649 with unknown orientation")
+        raise Exception
     config["ICM20649"]["ACC_Z_ERR"] = sum(acc_zs) / len(acc_zs)
     config["ICM20649"]["GYRO_X_ERR"] = sum(gyro_xs) / len(gyro_xs)
     config["ICM20649"]["GYRO_Y_ERR"] = sum(gyro_ys) / len(gyro_ys)
@@ -346,8 +353,8 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_rst"] = 42
         config["pins"]["lora_busy"] = 40 
         config["system"]["gps_pmtk_cmds"] = False
-        config["orient"]["transpose"] = (1,2,0)
-        config["orient"]["invert"] = (False,True,False)
+        config["orient"]["transpose"] = (2,0,1)
+        config["orient"]["invert"] = (False,False,True)
     else:
         print("FATAL ERROR: No Devices found on the I2C bus.")
 

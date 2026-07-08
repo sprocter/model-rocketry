@@ -43,6 +43,10 @@ class StateEstimator:
         self.magnetometer = [0.0, 0.0, 0.0]
         self.transpose = transpose
         self.invert = invert
+        if invert[2]: # Invert Z for speed and altitude filter
+            self.invZ = -1
+        else:
+            self.invZ = 1
         self.fuse = Fusion()
 
     @property
@@ -88,8 +92,8 @@ class StateEstimator:
     @altitude.setter
     def altitude(self, value) -> None:
         self.KF.predict(
-            self.acceleration[0]
-        )  # TODO: Should we use more than the X value? Adjust for pitch?
+            self.invZ * self.acceleration[self.transpose[2]]
+        )  # TODO: Should we use more than the Z value? Adjust for pitch?
         self.KF.update(value)
         self.fuse.update(
             orientate(self.transpose, self.invert, self.acceleration)[0],
