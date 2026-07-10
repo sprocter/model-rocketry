@@ -27,12 +27,19 @@ module battery_cover(){
                     cylinder(h = DEPTH + EPSILON, d = .1*I2M);
                 }
             }
+            // Beveled corners
+            rotate([0,45,0]){
+                translate([-4.5,-1 * EPSILON,0])
+                    cube([4, 45, 4]);
+                translate([12.5,-1 * EPSILON,16.5])
+                    cube([4, 45, 4]);
+            }
         }
         translate([.8*I2M/2,0,0]) { // Long crossbar
             cube([DEPTH, 40, DEPTH]);
         }
-        translate([0,(43-DEPTH)/2,0]) { // Short crossbar
-            cube([.8*I2M, DEPTH, DEPTH]);
+        translate([2,(43-DEPTH)/2,0]) { // Short crossbar
+            cube([.73*I2M, DEPTH, DEPTH]);
         }
     }
 

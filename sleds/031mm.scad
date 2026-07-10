@@ -86,6 +86,15 @@ difference() {
             }
         }
     }
+    // Beveled corners of battery cage
+    translate([0,4.6*in2mm,0]){
+        translate([-4.5,0,0])
+            rotate([0,45,0])
+                cube([4, 50, 4]);
+        translate([in2mm-1.19,h,0])
+            rotate([0,45,0])
+                cube([4, 50, 4]);
+    }
 }
 translate([.1 * in2mm-BOARD_DEPTH/2, 4.7 * in2mm, 0]){
     translate([.8*in2mm/2,2,0]) { // Long crossbar
