@@ -22,7 +22,7 @@ difference() {
         translate([0, 1.8 * in2mm, 0])
             cube([1 * in2mm, .2 * in2mm, BOARD_DEPTH]);
         translate([.8*in2mm, 2 * in2mm, 0])
-            cube([.2 * in2mm, 1.8 * in2mm, BOARD_DEPTH]);
+            cube([.2 * in2mm, 1.58 * in2mm, BOARD_DEPTH]);
         translate([0, 4.6 * in2mm, 0])
             cube([1 * in2mm, .2 * in2mm, BOARD_DEPTH]);
         translate([.8 * in2mm, 4.6 * in2mm, 0])
