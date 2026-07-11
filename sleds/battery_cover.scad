@@ -7,14 +7,14 @@ I2M = 25.4;
 
 
 module peg() {
-    cylinder(h = 8+DEPTH, r = .95 * 1.27);
+    cylinder(h = 7+DEPTH, r = .95 * 1.27);
 }
 
 // Walls
 module battery_cover(){
-    translate([-DEPTH/2,-DEPTH/2,8+DEPTH]) { // Top
+    translate([-DEPTH/2,-DEPTH/2,7+DEPTH]) { // Top
         difference() {
-            cube([.8*I2M+DEPTH, 43+DEPTH/2, DEPTH]);
+            cube([.8*I2M+DEPTH, 43+DEPTH/2, DEPTH-.413]);
             translate([DEPTH, DEPTH, -EPSILON/2]){
                 cube([.8*I2M+DEPTH-2*DEPTH, 43-2*DEPTH-2, DEPTH+EPSILON]);
             }
@@ -36,10 +36,10 @@ module battery_cover(){
             }
         }
         translate([.8*I2M/2,0,0]) { // Long crossbar
-            cube([DEPTH, 40, DEPTH]);
+            cube([DEPTH, 40, DEPTH-.413]);
         }
         translate([2,(43-DEPTH)/2,0]) { // Short crossbar
-            cube([.73*I2M, DEPTH, DEPTH]);
+            cube([.73*I2M, DEPTH, DEPTH-.413]);
         }
     }
 
