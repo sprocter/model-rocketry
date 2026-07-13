@@ -11,7 +11,7 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-from machine import PWM, Pin, I2C, Timer, RTC
+from machine import PWM, Pin, I2C, Timer, RTC, Signal
 from struct import pack, unpack
 from neopixel import NeoPixel
 from collections import deque
@@ -45,7 +45,7 @@ _RELENG_DEVELOP = const(1)
 _RELENG_TEST_NOGPS = const(2)
 _RELENG_TEST = const(3)
 _RELENG_RELEASE = const(4)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP_NOGPS)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -79,7 +79,7 @@ _NPXL_CYA = (0, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
 _NPXL_BLU = (0, 0, _NPXL_BRIGHTNESS)
 _NPXL_PUR = (_NPXL_BRIGHTNESS // 2, 0, _NPXL_BRIGHTNESS)
 
-_MODE_TO_LED = {
+_MODE_TO_NPXL = {
     _MODE_INITIALIZE: _NPXL_WHT,
     _MODE_LAUNCHPAD: _NPXL_RED,
     _MODE_ASCENT: _NPXL_ORA,
@@ -149,10 +149,10 @@ def send_radio_message(timer: Timer) -> None:
 
 
 def button_handler(boot_button: Pin) -> None:
-    global button_pressed
-    if button_pressed:
+    global disable_button
+    if disable_button:
         return
-    button_pressed = True
+    disable_button = True
     buzzer_timer.deinit()
     radio_timer.deinit()
     share_files()
@@ -359,12 +359,53 @@ def send_message() -> None:
     msg_id += 1
 
 
-def _update_neopixel() -> None:
-    if mode == _MODE_LAUNCHPAD and _GPS_CONNECTED:
-        neopixel[0] = _NPXL_YLW
+def _update_led() -> None:
+    if have_neopixel:
+        if mode == _MODE_LAUNCHPAD and _GPS_CONNECTED:
+            neopixel[0] = _NPXL_YLW  # TODO: Fix this
+        else:
+            neopixel[0] = _MODE_TO_NPXL[mode]
+        neopixel.write()
     else:
-        neopixel[0] = _MODE_TO_LED[mode]
-    neopixel.write()
+        # The Xio ESP32Ş-Plus has a green LED on the SX1262 daughterboard and
+        # an orange LED on the main board. But the orange one shares a pin with
+        # the user button on the SX1262 daughterboard, so we cannot use it when
+        # the button is enabled 🤦
+
+        if mode == _MODE_INITIALIZE:
+            # INITIALIZE = green LED on, rapid blinking while searching for
+            # GPS. The blinking is handled by the GPS initialization loop, so
+            # we just turn on the LED.
+            leds[0].on()
+        elif mode == _MODE_LAUNCHPAD:
+            leds[0].on()
+        elif mode in {_MODE_ASCENT, _MODE_DESCENT, _MODE_TOUCHDOWN} and len(leds) == 2:
+            # ASCENT, DESCENT, TOUCHDOWN = solid orange
+            leds[0].off()
+            # The second entry in leds stores the pin number
+            leds.append(Signal(Pin(leds[1], Pin.OUT), invert=True))
+            leds[2].on()
+        elif mode == _MODE_FINISHED:
+            # Green LED on, to be blinked by the buzzer timer
+            # We remove the orange LED signal; the pin will be used for
+            # user-input to switch to wifi mode
+            leds[0].on()
+            leds[2].off()
+            del leds[2]
+        elif mode == _MODE_WIFI:
+            # All off
+            leds[0].off()
+
+
+def _toggle_led(led_on: bool) -> None:
+    if have_neopixel:
+        if not led_on:
+            neopixel[0] = _NPXL_OFF
+        else:
+            neopixel[0] = _MODE_TO_NPXL[mode]
+        neopixel.write()
+    else:
+        leds[0](led_on)
 
 
 def _init_radio(config: dict):
@@ -375,7 +416,7 @@ def _init_radio(config: dict):
     mosi = config["pins"]["spi_mosi"]
     miso = config["pins"]["spi_miso"]
     cs = config["pins"]["lora_cs"]
-    irq = config["pins"]["lora_dio1"] 
+    irq = config["pins"]["lora_dio1"]
     rst = config["pins"]["lora_rst"]
     gpio = config["pins"]["lora_busy"]
 
@@ -433,7 +474,11 @@ def _init_devices(config: dict) -> None:
     else:
         raise OSError(f"No magnetometer connected!")
 
-    gps = GPS(config["pins"]["uart_tx"], config["pins"]["uart_rx"], config["system"]["gps_pmtk_cmds"])
+    gps = GPS(
+        config["pins"]["uart_tx"],
+        config["pins"]["uart_rx"],
+        config["system"]["gps_pmtk_cmds"],
+    )
     gps.initialize()
 
     # ADXL375 has the widest range (±200g) so we prefer it. ICM20649 has ±30g,
@@ -475,8 +520,8 @@ def _init_devices(config: dict) -> None:
     batt_monitor = MAX17048(i2c)
 
 
-def _init_board():
-    global radio_timer, sensor_reading_timer, buzzer_timer, button_pressed, neopixel
+def _init_board(config: dict) -> None:
+    global radio_timer, sensor_reading_timer, buzzer_timer, disable_button, neopixel, have_neopixel, leds
 
     # Clean up memory to reduce issues with fragmentation
     gc.collect()
@@ -484,19 +529,28 @@ def _init_board():
     buff.init_buffer(_BUFFER_SIZE)
 
     # Initialize the status LED
-    neopixel_pin = Pin(40, Pin.OUT)
-    neopixel = NeoPixel(neopixel_pin, 1)
-    _update_neopixel()
+    have_neopixel = config["system"]["have_neopixel"]
+    if have_neopixel:
+        neopixel_pin = Pin(config["pins"]["led1"], Pin.OUT)
+        neopixel = NeoPixel(neopixel_pin, 1)
+    else:
+        leds = []
+        leds.append(Signal(Pin(config["pins"]["led1"], Pin.OUT), invert=False))
+        leds.append(config["pins"]["led2"])
+        # Don't initialize the second LED until we need it (and de-initialize
+        # it as soon as we don't) since it shares a pin with a button we need
+        # to monitor
+    _update_led()
 
     # Initialize timers
     sensor_reading_timer = Timer(0)  # Controls reading from sensors
     radio_timer = Timer(1)  # Controls radio broadcasts
     buzzer_timer = Timer(2)  # Controls the changing pitch of the buzzer
 
-    # Initialize the "boot" button and register its handler
-    boot_button = Pin(0, Pin.IN, Pin.PULL_UP)
-    boot_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
-    button_pressed = False
+    # Initialize the user button and register its handler
+    user_button = Pin(config["pins"]["button"], Pin.IN, Pin.PULL_UP)
+    user_button.irq(trigger=Pin.IRQ_FALLING, handler=button_handler)
+    disable_button = False
 
     # Mount the filesystem so we can read the config json file and
     # (after touchdown) write the recorded data to flash
@@ -511,18 +565,27 @@ def initialize():
     init_time = time.ticks_ms()
     launch_time_ms = init_time  # launch time will be reset when liftoff is detected
 
-    _init_board()
-
-    initial_mcu_temp = esp32.mcu_temperature()
-
     with open("/config.json", "r") as f:
         config = json.loads(f.read())
 
+    _init_board(config)
+
+    initial_mcu_temp = esp32.mcu_temperature()
+
     _init_devices(config)
 
-    initial_batt_soc = batt_monitor.charge_percent
+    if config["system"]["have_batt_mon"]:
+        initial_batt_soc = batt_monitor.charge_percent
+    else:
+        initial_batt_soc = -1
 
-    estimator = StateEstimator(_PERIOD, alti.error, accel.error, config["orient"]["transpose"], config["orient"]["invert"])
+    estimator = StateEstimator(
+        _PERIOD,
+        alti.error,
+        accel.error,
+        config["orient"]["transpose"],
+        config["orient"]["invert"],
+    )
 
     gps_reading_count = 0
     reading_num = 0  # _LAUNCHPAD_READINGS + 1
@@ -539,21 +602,18 @@ def initialize():
     ascent_altis = deque([], _RECENT_READINGS)
     descent_altis = deque([], _RECENT_READINGS)
 
+    led_on = True
+
     if _RELEASE_LEVEL == _RELENG_DEVELOP_NOGPS or _RELEASE_LEVEL == _RELENG_TEST_NOGPS:
-        gps_wait_time = 3
+        wait_for_gps = False
     else:
-        gps_wait_time = 300_000
-    while (time.ticks_diff(time.ticks_ms(), init_time) < gps_wait_time) and (
+        wait_for_gps = True
+    while wait_for_gps and (
         gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
     ):
-        if npxl_on:
-            neopixel[0] = _NPXL_OFF
-            neopixel.write()
-            npxl_on = False
-        else:
-            neopixel[0] = _MODE_TO_LED[mode]
-            neopixel.write()
-            npxl_on = True
+        _toggle_led(led_on)
+
+        led_on = not led_on
 
         gps.clear_buffer()
         time.sleep_ms(100)
@@ -589,24 +649,25 @@ def initialize():
     gc.disable()
 
     mode = _MODE_LAUNCHPAD
-    _update_neopixel()
+    _update_led()
 
 
 def ascent() -> None:
-    global launch_time_ms, previous_gps_read_ts, launch_time_ymdwhms, mode
+    global launch_time_ms, previous_gps_read_ts, launch_time_ymdwhms, mode, disable_button
     # Nothing really to do here -- sensors are already on, and the switch to using the PSRAM buffer is handled by the process_reading function
     launch_time_ms = time.ticks_ms()
     previous_gps_read_ts = -101  # Force a GPS read next period
     if _GPS_CONNECTED:
         launch_time_ymdwhms = clock.datetime()
+    disable_button = True
     mode = _MODE_ASCENT
-    _update_neopixel()
+    _update_led()
 
 
 def descent() -> None:
     global mode
     mode = _MODE_DESCENT
-    _update_neopixel()
+    _update_led()
     if _RELEASE_LEVEL == _RELENG_RELEASE:
         enable_buzzer()
 
@@ -629,8 +690,12 @@ def _build_header_str() -> str:
         )
     else:
         date_hdr_str = "No Date"
+    if config["system"]["have_batt_mon"]:
+        final_batt_soc = batt_monitor.charge_percent
+    else:
+        final_batt_soc = -1
     batt_hdr_str = (
-        f"Batt % (Start),{initial_batt_soc},Batt % (End),{batt_monitor.charge_percent}"
+        f"Batt % (Start),{initial_batt_soc},Batt % (End),{final_batt_soc}"
     )
     mcu_hdr_str = (
         f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
@@ -702,10 +767,10 @@ def _write_data() -> None:
 
 
 def touchdown() -> None:
-    global mode
+    global mode, disable_button
 
     mode = _MODE_TOUCHDOWN
-    _update_neopixel()
+    _update_led()
 
     sensor_reading_timer.deinit()
     gc.enable()
@@ -718,8 +783,13 @@ def touchdown() -> None:
     send_message()  # Send a message as soon as we're done with file i/o
     enable_radio()  # Send future messages once per minute
 
+    disable_button = False
+
+    if not have_neopixel:
+        boot_button = Pin(leds[1], Pin.IN, Pin.PULL_UP)
+
     mode = _MODE_FINISHED
-    _update_neopixel()
+    _update_led()
 
 
 def share_files() -> None:
@@ -730,7 +800,7 @@ def share_files() -> None:
 
     global mode
     mode = _MODE_WIFI
-    _update_neopixel()
+    _update_led()
     with open("/config.json", "r") as f:
         config = json.loads(f.read())
     gc.collect()
@@ -749,7 +819,7 @@ def share_files() -> None:
 try:
     initialize()
     if _RELEASE_LEVEL == _RELENG_DEVELOP or _RELEASE_LEVEL == _RELENG_DEVELOP_NOGPS:
-        time.sleep(15)
+        time.sleep(5)
         ascent()
         time.sleep(5)
         descent()

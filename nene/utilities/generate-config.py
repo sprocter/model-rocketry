@@ -334,7 +334,12 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_dio1"] = 6
         config["pins"]["lora_rst"] = 44
         config["pins"]["lora_busy"] = 43
+        config["pins"]["button"] = 0
+        config["pins"]["led1"] = 40
+        config["pins"]["led2"] = None
         config["system"]["gps_pmtk_cmds"] = True
+        config["system"]["have_neopixel"] = True
+        config["system"]["have_batt_mon"] = True
         config["orient"]["transpose"] = (2,1,0)
         config["orient"]["invert"] = (False,False,False)
     elif(len((machine.I2C(scl=6, sda=5)).scan()) > 0):
@@ -352,7 +357,12 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_dio1"] = 39
         config["pins"]["lora_rst"] = 42
         config["pins"]["lora_busy"] = 40 
+        config["pins"]["button"] = 21
+        config["pins"]["led1"] = 48
+        config["pins"]["led2"] = 21
         config["system"]["gps_pmtk_cmds"] = False
+        config["system"]["have_neopixel"] = False
+        config["system"]["have_batt_mon"] = False
         config["orient"]["transpose"] = (2,0,1)
         config["orient"]["invert"] = (False,False,True)
     else:
@@ -644,8 +654,9 @@ print("Nene Configuration Generator")
 print("============================")
 config = _load_existing_config()
 
-_part_1(config)
-_part_2(config)
+#_part_1(config)
+#_part_2(config)
+_configure_pins(config)
 
 with open("/config.json", "w") as f:
     json.dump(config, f)
