@@ -73,7 +73,6 @@ _NPXL_OFF = (0, 0, 0)
 _NPXL_WHT = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
 _NPXL_RED = (_NPXL_BRIGHTNESS, 0, 0)
 _NPXL_ORA = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS // 2, 0)
-_NPXL_YLW = (_NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS, 0)
 _NPXL_GRN = (0, _NPXL_BRIGHTNESS, 0)
 _NPXL_CYA = (0, _NPXL_BRIGHTNESS, _NPXL_BRIGHTNESS)
 _NPXL_BLU = (0, 0, _NPXL_BRIGHTNESS)
@@ -361,10 +360,7 @@ def send_message() -> None:
 
 def _update_led() -> None:
     if have_neopixel:
-        if mode == _MODE_LAUNCHPAD and _GPS_CONNECTED:
-            neopixel[0] = _NPXL_YLW  # TODO: Fix this
-        else:
-            neopixel[0] = _MODE_TO_NPXL[mode]
+        neopixel[0] = _MODE_TO_NPXL[mode]
         neopixel.write()
     else:
         # The Xio ESP32Ş-Plus has a green LED on the SX1262 daughterboard and
@@ -378,7 +374,7 @@ def _update_led() -> None:
             # we just turn on the LED.
             leds[0].on()
         elif mode == _MODE_LAUNCHPAD:
-            leds[0].on()
+            leds[0].on()  # Solid green LED means ready to launch
         elif mode in {_MODE_ASCENT, _MODE_DESCENT, _MODE_TOUCHDOWN} and len(leds) == 2:
             # ASCENT, DESCENT, TOUCHDOWN = solid orange
             leds[0].off()
@@ -393,7 +389,7 @@ def _update_led() -> None:
             leds[2].off()
             del leds[2]
         elif mode == _MODE_WIFI:
-            # All off
+            # Green LED off (orange is already off)
             leds[0].off()
 
 
@@ -694,9 +690,7 @@ def _build_header_str() -> str:
         final_batt_soc = batt_monitor.charge_percent
     else:
         final_batt_soc = -1
-    batt_hdr_str = (
-        f"Batt % (Start),{initial_batt_soc},Batt % (End),{final_batt_soc}"
-    )
+    batt_hdr_str = f"Batt % (Start),{initial_batt_soc},Batt % (End),{final_batt_soc}"
     mcu_hdr_str = (
         f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
     )
