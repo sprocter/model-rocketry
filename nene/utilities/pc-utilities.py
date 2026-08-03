@@ -12,15 +12,54 @@ You should have received a copy of the GNU General Public License along with thi
 """
 
 import sys
+import csv
+import datetime as dt
+from itertools import pairwise
+import statistics
 
-def dm2dd(dm : str) -> str:
+M_2_F = 3.280839895
+MS_2_MPH = 2.2369362921
+MSS_2_G = 0.1019716213
+
+def parse_csv_header(header: str) -> dict:
+    ret = {}
+    hdr_elems = header.split(",")
+    ret["SystemName"] = hdr_elems[0]
+    ret["LaunchTime"] = dt.datetime.fromisoformat(hdr_elems[2])
+    ret["BattStart"] = float(hdr_elems[4])
+    ret["BattEnd"] = float(hdr_elems[6])
+    ret["MCUTempStart"] = int(hdr_elems[8])
+    ret["MCUTempEnd"] = int(hdr_elems[10])
+    return ret
+
+
+def parse_csv(filename: str) -> list:
+    ret = []
+    with open(filename, newline="") as csvfile:
+        ret.append(
+            parse_csv_header(next(csvfile))
+        )  # Manually process first row, its not columnar
+        cread = csv.DictReader(csvfile, skipinitialspace=True)
+        for row in cread:
+            ret.append(row)
+    return ret
+
+
+def dm2dd(dm: str) -> str:
     dd = float(dm[0:2])
     mm = float(dm[2:]) / 60
     return str(dd + mm)
 
-def csv_to_kml(filename: str) -> None:
-    import csv
-    print("""<?xml version="1.0" encoding="UTF-8"?>
+
+def write_kml(data: list) -> None:
+    coords = " ".join(
+        [
+            f"-{dm2dd(row['lon(ddmm.mmmm)'])},{dm2dd(row['lat (ddmm.mmmm)'])},{row['baro_alt (m)']}"
+            for row in data[1:]
+        ]
+    )
+
+    kml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>Nene Flightpath</name>
@@ -28,19 +67,326 @@ def csv_to_kml(filename: str) -> None:
       <name>Flight Path</name>
       <LineString>
         <altitudeMode>relativeToGround</altitudeMode>
-        <coordinates>""", end='')
-    with open(filename, newline='') as csvfile:
-        next(csvfile) # Skip first row
-        cread = csv.DictReader(csvfile)
-        for row in cread:
-            lon = dm2dd(row[' lon(ddmm.mmmm)'].strip())
-            lat = dm2dd(row[' lat (ddmm.mmmm)'].strip())
-            alt = row[' baro_alt (m)'].strip()
-            print(f"-{lon},{lat},{alt}", end=' ')
-    print("""</coordinates>
+        <coordinates>{coords}</coordinates>
       </LineString>
     </Placemark>
   </Document>
-</kml>""")
+</kml>
+"""
+    with open(
+        f'{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}.kml',
+        "w",
+    ) as kmlfile:
+        kmlfile.write(kml)
 
-csv_to_kml(sys.argv[1])
+
+def get_rod_velocity(data: list, init_alti: float) -> float:
+    for i in range(len(data)):
+        if i <= 6:
+            continue
+        # Now find where we first are 1m higher than the initial altitude
+        if float(data[i]["est_alt (m)"]) - init_alti < 1:
+            continue
+        return float(data[i]["est_speed(m/s)"])
+
+
+def get_ejec_idx(data: list) -> int:
+    # Find the biggest positive change in x acceleration over the recent average
+    # We're looking for sudden spikes in the direction the nose cone points
+    diffs = []
+    for i in range(len(data)):
+        if i <= 6:
+            continue
+        avg_x_accs = statistics.mean(
+            float(row["acc_x (m/s^2)"]) for row in data[i - 5 : i]
+        )
+        diffs.append(float(data[i]["acc_x (m/s^2)"]) - avg_x_accs)
+    # Now get the index where this spike occurs
+    return diffs.index(max(diffs)) + 6
+
+
+def get_touchdown_idx(data: list) -> int:
+    # Working backwards, find the first (last) significant acceleration
+    diffs = []
+    for i in reversed(range(len(data))):
+        if (
+            float(data[i]["acc_x (m/s^2)"]) ** 2
+            + float(data[i]["acc_y (m/s^2)"]) ** 2
+            + float(data[i]["acc_z (m/s^2)"]) ** 2
+        ) ** 0.5 > 25:
+            return i
+    return -1
+
+def get_stage_idxs(data:list) -> list[int]:
+    stages = []
+    G_2_MSS = 1/MSS_2_G
+    accelerating = False
+    start = -1
+    end = -1
+    for i in range(len(data)):
+        if i < 1:
+            continue
+        if not accelerating:
+            if float(data[i]["acc_x (m/s^2)"]) > 2 * G_2_MSS:
+                start = i
+                accelerating = True
+        else:
+            if float(data[i]["acc_x (m/s^2)"]) < .5 * G_2_MSS:
+                end = i
+                # Disregard spikes of less than half a second
+                if float(data[end]["time (ms)"]) - float(data[start]["time (ms)"]) >= 500.0:
+                    stages.append({"ignition" : start, "burnout" : end})
+                accelerating = False
+    return stages
+
+def write_html(data: list) -> None:
+    page_title = (
+        f"{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}"
+    )
+
+    system_name = data[0]["SystemName"]
+    launch_date = data[0]["LaunchTime"].strftime("%A, %B %d, %Y")
+    launch_time = data[0]["LaunchTime"].strftime("%I:%M:%S %p")
+
+    # Get starting altitude by averaging some initial readings
+    init_alti = statistics.mean(float(row["est_alt (m)"]) for row in data[1:6])
+    ejec_idx = get_ejec_idx(data)
+    touchdown_idx = get_touchdown_idx(data)
+    stage_idxs = get_stage_idxs(data)
+    duration_descent = dt.timedelta(
+        milliseconds=(
+            int(float(data[touchdown_idx]["time (ms)"]))
+            - int(float(data[ejec_idx]["time (ms)"]))
+        )
+    )
+
+    altitude_m = max(float(row["est_alt (m)"]) for row in data[1:]) - init_alti
+    velocity_ms = max(float(row["est_speed(m/s)"]) for row in data[1:])
+    accel_mss = max(float(row["acc_x (m/s^2)"]) for row in data[1 : ejec_idx - 1])
+
+    velocity_rod_ms = get_rod_velocity(data, init_alti)
+    velocity_ejec_ms = float(data[ejec_idx]["est_speed(m/s)"])
+    velocity_descent_ms = (
+        float(data[ejec_idx]["baro_alt (m)"])
+        - float(data[touchdown_idx]["baro_alt (m)"])
+    ) / duration_descent.seconds
+
+    duration_stage1 = dt.timedelta(
+        milliseconds=(
+            int(float(data[stage_idxs[0]["burnout"]]["time (ms)"]))
+            - int(float(data[stage_idxs[0]["ignition"]]["time (ms)"]))
+        )
+    )
+    if len(stage_idxs) > 1:
+        # hell yeah
+
+        velocity_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_speed(m/s)"])
+        altitude_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_alt (m)"])
+
+        velocity_stage2_row = f"""<tr>
+                <td class="tg-cly1">… at Second Stage Ignition (m/s, mph)</td>
+                <td class="tg-cly1">{velocity_stage2_igni_m:.2f}</td>
+                <td class="tg-cly1">{velocity_stage2_igni_m * MS_2_MPH:.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>"""
+
+        altitude_stage2_row = f"""<tr>
+                <td class="tg-cly1">… at Second Stage Ignition (m, ft)</td>
+                <td class="tg-cly1">{altitude_stage2_igni_m:.2f}</td>
+                <td class="tg-cly1">{altitude_stage2_igni_m * M_2_F:.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>"""
+
+        duration_stage2 = dt.timedelta(
+            milliseconds=(
+                int(float(data[stage_idxs[1]["burnout"]]["time (ms)"]))
+                - int(float(data[stage_idxs[1]["ignition"]]["time (ms)"]))
+            )
+        )
+    else:
+        velocity_stage2_row = ""
+        altitude_stage2_row = ""
+        duration_stage2 = dt.timedelta(milliseconds=(0))
+    
+    altitude_ejec_m = float(data[ejec_idx]["est_alt (m)"])
+
+    frametimes_raw = [
+        float(row2["time (ms)"]) - float(row1["time (ms)"])
+        for (row1, row2) in pairwise(data[1:])
+    ]
+    frametimes = [
+        frametime for frametime in frametimes_raw if frametime > 0 and frametime < 500
+    ]
+    frametime_percentiles = statistics.quantiles(frametimes, n=100, method="inclusive")
+
+    html = f"""<html>
+    <head><title>{page_title}</title></head>
+    <style type="text/css">
+        .tg  {{border-collapse:collapse;border-color:#ccc;border-spacing:0;}}
+        .tg td{{background-color:#fff;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
+        font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;word-break:normal;}}
+        .tg th{{background-color:#f0f0f0;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
+        font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}}
+        .tg .tg-cly1{{text-align:left;vertical-align:middle}}
+        .tg .tg-0lax{{text-align:left;vertical-align:top}}
+        </style>
+        <table class="tg">
+        <!-- Table formatting generated via https://www.tablesgenerator.com/html_tables -->
+        <thead>
+            <tr>
+                <th class="tg-cly1">{system_name}</th>
+                <th class="tg-cly1" colspan="2">{launch_date}</th>
+                <th class="tg-cly1">{launch_time}</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-cly1">SI</td>
+                <td class="tg-cly1">Imperial</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Maximum:</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… Altitude (m, ft)</td>
+                <td class="tg-cly1">{altitude_m:,.2f}</td>
+                <td class="tg-cly1">{altitude_m * M_2_F:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… Velocity (m/s, mph)</td>
+                <td class="tg-cly1">{velocity_ms:,.2f}</td>
+                <td class="tg-cly1">{velocity_ms * MS_2_MPH:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… Acceleration (m/s2, g)</td>
+                <td class="tg-cly1">{accel_mss:,.2f}</td>
+                <td class="tg-cly1">{accel_mss * MSS_2_G:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Velocity:</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… Off Rod (1m) (m/s, mph)</td>
+                <td class="tg-cly1">{velocity_rod_ms:,.2f}</td>
+                <td class="tg-cly1">{velocity_rod_ms * MS_2_MPH:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            {velocity_stage2_row}
+            <tr>
+                <td class="tg-cly1">… at Ejection Charge (m/s, mph)</td>
+                <td class="tg-cly1">{velocity_ejec_ms:,.2f}</td>
+                <td class="tg-cly1">{velocity_ejec_ms * MS_2_MPH:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… Descent (Average) (m/s, mph)</td>
+                <td class="tg-cly1">{velocity_descent_ms:,.2f}</td>
+                <td class="tg-cly1">{velocity_descent_ms * MS_2_MPH:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Altitude:</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            {altitude_stage2_row}
+            <tr>
+                <td class="tg-cly1">… at Ejection Charge (m, ft)</td>
+                <td class="tg-cly1">{altitude_ejec_m:,.2f}</td>
+                <td class="tg-cly1">{altitude_ejec_m * M_2_F:,.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Duration:</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… of Stage Burns</td>
+                <td class="tg-cly1">{str(duration_stage1)[2:10]}</td>
+                <td class="tg-cly1">{str(duration_stage2)[2:10] if duration_stage2.microseconds > 0 else ""}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… of Descent</td>
+                <td class="tg-cly1">{str(duration_descent)[2:10]}</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Frame Time (Avg, StdDev)</td>
+                <td class="tg-cly1">{statistics.mean(frametimes):.2f}</td>
+                <td class="tg-cly1">{statistics.pstdev(frametimes):.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Frame Time (95th %, 99th %, Worst)</td>
+                <td class="tg-cly1">{frametime_percentiles[94]:.2f}</td>
+                <td class="tg-cly1">{frametime_percentiles[98]:.2f}</td>
+                <td class="tg-cly1">{max(frametimes):.2f}</td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Battery Level (Start, End)</td>
+                <td class="tg-cly1">{data[0]["BattStart"]:.2f}</td>
+                <td class="tg-cly1">{data[0]["BattEnd"]:.2f}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">MCU Temp (Start, End) (°C) </td>
+                <td class="tg-cly1">{data[0]["MCUTempStart"]}</td>
+                <td class="tg-cly1">{data[0]["MCUTempEnd"]}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            </tbody>
+        </table>
+    </html>
+"""
+
+    with open(
+        f'{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}.html',
+        "w",
+    ) as htmlfile:
+        htmlfile.write(html)
+
+
+filename = sys.argv[1]
+parsed_csv = parse_csv(filename)
+write_html(parsed_csv)
+write_kml(parsed_csv)

@@ -626,7 +626,7 @@ def initialize():
                 gps.year,
                 gps.month,
                 gps.day,
-                gps.hour - 4,  # Timezones, oy
+                gps.hour,  # Record the timestamp in UTC, handle timezeones elsewhere
                 gps.minute,
                 gps.second,
                 0,  # microsecond, ignored (?)
@@ -682,7 +682,7 @@ def _build_header_str() -> str:
         minute = launch_time_ymdwhms[5]
         second = launch_time_ymdwhms[6]
         date_hdr_str = (
-            f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
+            f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}Z"
         )
     else:
         date_hdr_str = "No Date"
