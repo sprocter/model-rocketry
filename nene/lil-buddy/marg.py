@@ -16,14 +16,22 @@ You should have received a copy of the GNU General Public License along with thi
 from ulab import numpy as np
 from fusion import Fusion
 from orientate import orientate
+from math import degrees, radians, acos, cos
 
 
 class StateEstimator:
 
-    # Roll, pitch, and yaw are oriented according to this layout: 
+    # Roll, pitch, and yaw are oriented according to this layout:
     # https://www1.grc.nasa.gov/wp-content/uploads/rotations.gif
 
-    def __init__(self, period: float, accel_err: float, alti_err: float, transpose: tuple(int, int, int), invert: tuple(bool, bool, bool)):
+    def __init__(
+        self,
+        period: float,
+        accel_err: float,
+        alti_err: float,
+        transpose: tuple(int, int, int),
+        invert: tuple(bool, bool, bool),
+    ):
         """Initialize the estimator
 
         This initializes a Kalman filter using the supplied timestep and errors (as standard deviations)
@@ -43,7 +51,7 @@ class StateEstimator:
         self.magnetometer = [0.0, 0.0, 0.0]
         self.transpose = transpose
         self.invert = invert
-        if invert[2]: # Invert Z for speed and altitude filter
+        if invert[2]:  # Invert Z for speed and altitude filter
             self.invZ = -1
         else:
             self.invZ = 1
@@ -59,7 +67,7 @@ class StateEstimator:
 
     @property
     def heading(self) -> float:
-        # Roll for a rocket (which primarily travels vertically) is akin to 
+        # Roll for a rocket (which primarily travels vertically) is akin to
         # heading for a plane (which primarily travels horizontally)
         return -1 * self.fuse.roll
 
@@ -68,8 +76,12 @@ class StateEstimator:
         return self.fuse.pitch
 
     @property
+    def tilt(self) -> float:
+        return degrees(acos(cos(radians(self.heading)) * cos(radians(self.pitch))))
+
+    @property
     def roll(self) -> float:
-        # heading for a rocket (which primarily travels vertically) is akin to 
+        # heading for a rocket (which primarily travels vertically) is akin to
         # roll for a plane (which primarily travels horizontally)
         h = self.fuse.heading + 9.283
         if h < 0:
@@ -98,7 +110,11 @@ class StateEstimator:
         self.fuse.update(
             orientate(self.transpose, self.invert, self.acceleration)[0],
             # The fusion module seems to want the Z axis to spin the other way
-            orientate(self.transpose, tuple((x or y) for x,y in zip(self.invert, (True, True, False))), self.gyroscope)[0],
+            orientate(
+                self.transpose,
+                tuple((x or y) for x, y in zip(self.invert, (True, True, False))),
+                self.gyroscope,
+            )[0],
             orientate(self.transpose, self.invert, self.magnetometer)[0],
         )
 

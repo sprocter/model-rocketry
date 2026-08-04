@@ -473,9 +473,18 @@ def _test_AHRS() -> None:
         estimator.gyroscope = gyro.decode_gyro(gyro.buffer)
         estimator.altitude = alti.decode_alti(alti.buffer)
         i += 1
+        tilt_start = time.ticks_us()
+        tilt = estimator.tilt
+        tilt_end = time.ticks_us()
+        heading = estimator.heading
+        pitch = estimator.pitch
+        roll = estimator.roll
+        altitude = estimator.altitude
+        velocity = estimator.velocity
+        all_end = time.ticks_us()
         if i % 10 == 0:
             print(
-                f"Heading: {estimator.heading:.2f}\tPitch: {estimator.pitch:.2f}\tRoll: {estimator.roll:.2f}\tAltitude: {estimator.altitude:.2f}\tVelocity: {estimator.velocity:.2f}"
+                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}\tTimes: Tilt {time.ticks_diff(tilt_end, tilt_start)}us, Others {time.ticks_diff(all_end, tilt_end)}μs"
             )
         time.sleep_ms(23)
 
@@ -654,13 +663,13 @@ print("Nene Configuration Generator")
 print("============================")
 config = _load_existing_config()
 
-#_part_1(config)
-#_part_2(config)
-_configure_pins(config)
+# _part_1(config)
+# _part_2(config)
+# _configure_pins(config)
 
-with open("/config.json", "w") as f:
-    json.dump(config, f)
-print("")
-print("Configuration saved.")
+# with open("/config.json", "w") as f:
+#     json.dump(config, f)
+# print("")
+# print("Configuration saved.")
 
 _part_3(config)

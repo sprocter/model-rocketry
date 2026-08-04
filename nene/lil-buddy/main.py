@@ -221,7 +221,7 @@ def process_reading(
         gps.decode_reading(gps_buffer)
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
-            ">ffffffffffffffffffff",
+            ">fffffffffffffffffffff",
             float(timestamp),
             acc_rdg[0],
             acc_rdg[1],
@@ -237,6 +237,7 @@ def process_reading(
             ambient_temp,
             float(gps.lat),
             float(gps.lon),
+            estimator.tilt,
             estimator.heading,
             estimator.pitch,
             estimator.roll,
@@ -245,7 +246,7 @@ def process_reading(
         )
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        idx_start = reading_num * 20
+        idx_start = reading_num * 21
         buff.store(idx_start + 0, float(timestamp))
         buff.store(idx_start + 1, acc_rdg[0])
         buff.store(idx_start + 2, acc_rdg[1])
@@ -265,11 +266,12 @@ def process_reading(
         buff.store(idx_start + 13, float(gps.lat))
         buff.store(idx_start + 14, float(gps.lon))
 
-        buff.store(idx_start + 15, estimator.heading)
-        buff.store(idx_start + 16, estimator.pitch)
-        buff.store(idx_start + 17, estimator.roll)
-        buff.store(idx_start + 18, estimated_altitude)
-        buff.store(idx_start + 19, estimator.velocity)
+        buff.store(idx_start + 15, estimator.tilt)
+        buff.store(idx_start + 16, estimator.heading)
+        buff.store(idx_start + 17, estimator.pitch)
+        buff.store(idx_start + 18, estimator.roll)
+        buff.store(idx_start + 19, estimated_altitude)
+        buff.store(idx_start + 20, estimator.velocity)
 
         reading_num += 1
 
@@ -695,7 +697,7 @@ def _build_header_str() -> str:
         f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
     )
 
-    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
+    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_tilt (deg), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
 
     return f"{name_hdr_str},{placeholder_str},{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
 
@@ -705,9 +707,9 @@ def _write_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">ffffffffffffffffffff", entry))
+        unpacked = list(unpack(">fffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
-        adjusted_ground_readings.append(pack(">ffffffffffffffffffff", *unpacked))
+        adjusted_ground_readings.append(pack(">fffffffffffffffffffff", *unpacked))
 
     header_str = _build_header_str()
 
@@ -734,15 +736,15 @@ def _write_data() -> None:
                         (
                             ", ".join(
                                 str(x)
-                                for x in unpack(">ffffffffffffffffffff", packed_reading)
+                                for x in unpack(">fffffffffffffffffffff", packed_reading)
                             )
                             + "\n"
                         ).encode("UTF-8")
                     )
-                reading = [0.0] * 20
+                reading = [0.0] * 21
                 for i in range(reading_num):
-                    for j in range(20):
-                        reading[j] = buff.retrieve_from(i * 20 + j)
+                    for j in range(21):
+                        reading[j] = buff.retrieve_from(i * 21 + j)
                     d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
     else:
         if header_str is not None:
@@ -750,13 +752,13 @@ def _write_data() -> None:
         for packed_reading in adjusted_ground_readings:
             print(
                 ", ".join(
-                    str(x) for x in unpack(">ffffffffffffffffffff", packed_reading)
+                    str(x) for x in unpack(">fffffffffffffffffffff", packed_reading)
                 )
             )
-        reading = [0.0] * 20
+        reading = [0.0] * 21
         for i in range(reading_num):
-            for j in range(20):
-                reading[j] = buff.retrieve_from(i * 20 + j)
+            for j in range(21):
+                reading[j] = buff.retrieve_from(i * 21 + j)
             print(", ".join(str(x) for x in reading))
 
 
