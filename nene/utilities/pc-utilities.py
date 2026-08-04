@@ -25,7 +25,10 @@ def parse_csv_header(header: str) -> dict:
     ret = {}
     hdr_elems = header.split(",")
     ret["SystemName"] = hdr_elems[0]
-    ret["LaunchTime"] = dt.datetime.fromisoformat(hdr_elems[2])
+    try:
+        ret["LaunchTime"] = dt.datetime.fromisoformat(hdr_elems[2])
+    except:
+        ret["LaunchTime"] = dt.datetime.today()
     ret["BattStart"] = float(hdr_elems[4])
     ret["BattEnd"] = float(hdr_elems[6])
     ret["MCUTempStart"] = int(hdr_elems[8])
@@ -88,6 +91,7 @@ def get_rod_velocity(data: list, init_alti: float) -> float:
         if float(data[i]["est_alt (m)"]) - init_alti < 1:
             continue
         return float(data[i]["est_speed(m/s)"])
+    return 0
 
 
 def get_ejec_idx(data: list) -> int:
@@ -109,6 +113,8 @@ def get_touchdown_idx(data: list) -> int:
     # Working backwards, find the first (last) significant acceleration
     diffs = []
     for i in reversed(range(len(data))):
+        if i < 1:
+            continue
         if (
             float(data[i]["acc_x (m/s^2)"]) ** 2
             + float(data[i]["acc_y (m/s^2)"]) ** 2
@@ -171,42 +177,49 @@ def write_html(data: list) -> None:
         - float(data[touchdown_idx]["baro_alt (m)"])
     ) / duration_descent.seconds
 
-    duration_stage1 = dt.timedelta(
-        milliseconds=(
-            int(float(data[stage_idxs[0]["burnout"]]["time (ms)"]))
-            - int(float(data[stage_idxs[0]["ignition"]]["time (ms)"]))
-        )
-    )
-    if len(stage_idxs) > 1:
-        # hell yeah
-
-        velocity_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_speed(m/s)"])
-        altitude_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_alt (m)"])
-
-        velocity_stage2_row = f"""<tr>
-                <td class="tg-cly1">… at Second Stage Ignition (m/s, mph)</td>
-                <td class="tg-cly1">{velocity_stage2_igni_m:.2f}</td>
-                <td class="tg-cly1">{velocity_stage2_igni_m * MS_2_MPH:.2f}</td>
-                <td class="tg-0lax"></td>
-            </tr>"""
-
-        altitude_stage2_row = f"""<tr>
-                <td class="tg-cly1">… at Second Stage Ignition (m, ft)</td>
-                <td class="tg-cly1">{altitude_stage2_igni_m:.2f}</td>
-                <td class="tg-cly1">{altitude_stage2_igni_m * M_2_F:.2f}</td>
-                <td class="tg-0lax"></td>
-            </tr>"""
-
-        duration_stage2 = dt.timedelta(
+    if len(stage_idxs) > 0:
+        duration_stage1 = dt.timedelta(
             milliseconds=(
-                int(float(data[stage_idxs[1]["burnout"]]["time (ms)"]))
-                - int(float(data[stage_idxs[1]["ignition"]]["time (ms)"]))
+                int(float(data[stage_idxs[0]["burnout"]]["time (ms)"]))
+                - int(float(data[stage_idxs[0]["ignition"]]["time (ms)"]))
             )
         )
+        if len(stage_idxs) > 1:
+            # hell yeah
+
+            velocity_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_speed(m/s)"])
+            altitude_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_alt (m)"])
+
+            velocity_stage2_row = f"""<tr>
+                    <td class="tg-cly1">… at Second Stage Ignition (m/s, mph)</td>
+                    <td class="tg-cly1">{velocity_stage2_igni_m:.2f}</td>
+                    <td class="tg-cly1">{velocity_stage2_igni_m * MS_2_MPH:.2f}</td>
+                    <td class="tg-0lax"></td>
+                </tr>"""
+
+            altitude_stage2_row = f"""<tr>
+                    <td class="tg-cly1">… at Second Stage Ignition (m, ft)</td>
+                    <td class="tg-cly1">{altitude_stage2_igni_m:.2f}</td>
+                    <td class="tg-cly1">{altitude_stage2_igni_m * M_2_F:.2f}</td>
+                    <td class="tg-0lax"></td>
+                </tr>"""
+
+            duration_stage2 = dt.timedelta(
+                milliseconds=(
+                    int(float(data[stage_idxs[1]["burnout"]]["time (ms)"]))
+                    - int(float(data[stage_idxs[1]["ignition"]]["time (ms)"]))
+                )
+            )
+        else:
+            velocity_stage2_row = ""
+            altitude_stage2_row = ""
+            duration_stage2 = dt.timedelta(milliseconds=(0))
     else:
+        duration_stage1 = dt.timedelta(seconds=0)
         velocity_stage2_row = ""
         altitude_stage2_row = ""
         duration_stage2 = dt.timedelta(milliseconds=(0))
+
     
     altitude_ejec_m = float(data[ejec_idx]["est_alt (m)"])
 
