@@ -16,10 +16,17 @@ import csv
 import datetime as dt
 from itertools import pairwise
 import statistics
+import matplotlib.pyplot as plt
+
+
+import io
+import base64
+
 
 M_2_F = 3.280839895
 MS_2_MPH = 2.2369362921
 MSS_2_G = 0.1019716213
+
 
 def parse_csv_header(header: str) -> dict:
     ret = {}
@@ -77,7 +84,7 @@ def write_kml(data: list) -> None:
 </kml>
 """
     with open(
-        f'{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}.kml',
+        f'KML-{data[0]["SystemName"]}-{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}.kml',
         "w",
     ) as kmlfile:
         kmlfile.write(kml)
@@ -123,9 +130,10 @@ def get_touchdown_idx(data: list) -> int:
             return i
     return -1
 
-def get_stage_idxs(data:list) -> list[int]:
+
+def get_stage_idxs(data: list) -> list[int]:
     stages = []
-    G_2_MSS = 1/MSS_2_G
+    G_2_MSS = 1 / MSS_2_G
     accelerating = False
     start = -1
     end = -1
@@ -137,18 +145,19 @@ def get_stage_idxs(data:list) -> list[int]:
                 start = i
                 accelerating = True
         else:
-            if float(data[i]["acc_x (m/s^2)"]) < .5 * G_2_MSS:
+            if float(data[i]["acc_x (m/s^2)"]) < 0.5 * G_2_MSS:
                 end = i
                 # Disregard spikes of less than half a second
-                if float(data[end]["time (ms)"]) - float(data[start]["time (ms)"]) >= 500.0:
-                    stages.append({"ignition" : start, "burnout" : end})
+                if (
+                    float(data[end]["time (ms)"]) - float(data[start]["time (ms)"])
+                    >= 500.0
+                ):
+                    stages.append({"ignition": start, "burnout": end})
                 accelerating = False
     return stages
 
-def write_html(data: list) -> None:
-    page_title = (
-        f"{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}"
-    )
+
+def generate_table(data: list) -> str:
 
     system_name = data[0]["SystemName"]
     launch_date = data[0]["LaunchTime"].strftime("%A, %B %d, %Y")
@@ -187,8 +196,12 @@ def write_html(data: list) -> None:
         if len(stage_idxs) > 1:
             # hell yeah
 
-            velocity_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_speed(m/s)"])
-            altitude_stage2_igni_m = float(data[stage_idxs[1]["ignition"]]["est_alt (m)"])
+            velocity_stage2_igni_m = float(
+                data[stage_idxs[1]["ignition"]]["est_speed(m/s)"]
+            )
+            altitude_stage2_igni_m = float(
+                data[stage_idxs[1]["ignition"]]["est_alt (m)"]
+            )
 
             velocity_stage2_row = f"""<tr>
                     <td class="tg-cly1">… at Second Stage Ignition (m/s, mph)</td>
@@ -210,18 +223,22 @@ def write_html(data: list) -> None:
                     - int(float(data[stage_idxs[1]["ignition"]]["time (ms)"]))
                 )
             )
+            tilt_stage2 = float(data[stage_idxs[1]["ignition"]]["est_tilt (deg)"])
         else:
             velocity_stage2_row = ""
             altitude_stage2_row = ""
             duration_stage2 = dt.timedelta(milliseconds=(0))
+            tilt_stage2 = None
     else:
         duration_stage1 = dt.timedelta(seconds=0)
         velocity_stage2_row = ""
         altitude_stage2_row = ""
         duration_stage2 = dt.timedelta(milliseconds=(0))
 
-    
     altitude_ejec_m = float(data[ejec_idx]["est_alt (m)"])
+
+    tilt_stage1 = float(data[stage_idxs[0]["ignition"]]["est_tilt (deg)"])
+    tilt_ejec = float(data[ejec_idx]["est_tilt (deg)"])
 
     frametimes_raw = [
         float(row2["time (ms)"]) - float(row1["time (ms)"])
@@ -232,18 +249,8 @@ def write_html(data: list) -> None:
     ]
     frametime_percentiles = statistics.quantiles(frametimes, n=100, method="inclusive")
 
-    html = f"""<html>
-    <head><title>{page_title}</title></head>
-    <style type="text/css">
-        .tg  {{border-collapse:collapse;border-color:#ccc;border-spacing:0;}}
-        .tg td{{background-color:#fff;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
-        font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;word-break:normal;}}
-        .tg th{{background-color:#f0f0f0;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
-        font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}}
-        .tg .tg-cly1{{text-align:left;vertical-align:middle}}
-        .tg .tg-0lax{{text-align:left;vertical-align:top}}
-        </style>
-        <table class="tg">
+    return f"""
+    <table class="tg">
         <!-- Table formatting generated via https://www.tablesgenerator.com/html_tables -->
         <thead>
             <tr>
@@ -340,7 +347,31 @@ def write_html(data: list) -> None:
                 <td class="tg-0lax"></td>
             </tr>
             <tr>
-                <td class="tg-cly1">Duration:</td>
+                <td class="tg-cly1">Tilt: (°)</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… at Motor Ignition (Stages)</td>
+                <td class="tg-cly1">{tilt_stage1:.2f}</td>
+                <td class="tg-cly1">{"{x:.2f}".format(x=tilt_stage2) if tilt_stage2 is not None else ""}</td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">… at Ejection Charge</td>
+                <td class="tg-cly1">{tilt_ejec:.2f}</td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+                <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">Duration: (Min:Sec)</td>
                 <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
@@ -387,13 +418,51 @@ def write_html(data: list) -> None:
                 <td class="tg-cly1">{data[0]["MCUTempEnd"]}</td>
                 <td class="tg-0lax"></td>
             </tr>
-            </tbody>
-        </table>
-    </html>
+        </tbody>
+    </table>
 """
 
+def fig_to_base64(fig):
+    img = io.BytesIO()
+    fig.savefig(img, format='png',
+                bbox_inches='tight')
+    img.seek(0)
+
+    return base64.b64encode(img.getvalue())
+
+def write_motion_plot(data: list, page_title: str) -> str:
+    fig, ax = plt.subplots()
+    ax.plot([1, 2, 3, 4], [1, 4, 2, 3])
+    #fig.savefig(f"Motion-{page_title}.png")
+    encoded = fig_to_base64(fig)
+    return '<img src="data:image/png;base64, {}">'.format(encoded.decode('utf-8'))
+
+
+def write_html(data: list) -> None:
+    page_title = (
+        f"{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}"
+    )
+
+    html = f"""<!DOCTYPE html>
+<html>
+    <head><title>{page_title}</title>
+        <style type="text/css">
+        .tg  {{border-collapse:collapse;border-color:#ccc;border-spacing:0;}}
+        .tg td{{background-color:#fff;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
+        font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;word-break:normal;}}
+        .tg th{{background-color:#f0f0f0;border-color:#ccc;border-style:solid;border-width:1px;color:#333;
+        font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}}
+        .tg .tg-cly1{{text-align:left;vertical-align:middle}}
+        .tg .tg-0lax{{text-align:left;vertical-align:top}}
+        </style>
+    </head>"""
+    html += generate_table(data)
+    html += write_motion_plot(data, page_title)
+    html += f"""
+</html>"""
+
     with open(
-        f'{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}-{data[0]["SystemName"]}.html',
+        f'Summary-{data[0]["SystemName"]}-{data[0]["LaunchTime"].strftime("%Y.%m.%d.%I.%M%p")}.html',
         "w",
     ) as htmlfile:
         htmlfile.write(html)

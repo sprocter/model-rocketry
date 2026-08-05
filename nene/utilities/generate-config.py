@@ -484,7 +484,7 @@ def _test_AHRS() -> None:
         all_end = time.ticks_us()
         if i % 10 == 0:
             print(
-                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}\tTimes: Tilt {time.ticks_diff(tilt_end, tilt_start)}us, Others {time.ticks_diff(all_end, tilt_end)}μs"
+                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}\tTimes: Tilt {time.ticks_diff(tilt_end, tilt_start)}μs, Others {time.ticks_diff(all_end, tilt_end)}μs"
             )
         time.sleep_ms(23)
 
