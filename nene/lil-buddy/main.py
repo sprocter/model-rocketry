@@ -111,8 +111,9 @@ def toggle_buzzer_freq(timer: Timer) -> None:
 
 
 def get_sensor_readings(timer: Timer) -> None:
-    global previous_gps_read_ts
+    global previous_gps_read_ts, microtime_start
 
+    microtime_start = time.ticks_us()
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
@@ -189,7 +190,7 @@ def process_reading(
     fresh_gps: bool,
     gps_buffer: bytearray,
 ) -> None:
-    global reading_num, gps_reading_count, apogee
+    global reading_num, gps_reading_count, apogee, prev_frame_time
 
     timestamp = int.from_bytes(timestamp_param, "little")
     raw_altitude = alti.decode_alti(alti_buffer)
@@ -217,11 +218,12 @@ def process_reading(
         if len(descent_altis) == 0 or timestamp - descent_altis[-1][0] >= 1000:
             descent_altis.append((timestamp, barometric_altitude))
     update_mode()
+
     if fresh_gps:
         gps.decode_reading(gps_buffer)
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
-            ">fffffffffffffffffffff",
+            ">ffffffffffffffffffffff",
             float(timestamp),
             acc_rdg[0],
             acc_rdg[1],
@@ -243,10 +245,11 @@ def process_reading(
             estimator.roll,
             estimated_altitude,
             estimator.velocity,
+            prev_frame_time,
         )
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        idx_start = reading_num * 21
+        idx_start = reading_num * 22
         buff.store(idx_start + 0, float(timestamp))
         buff.store(idx_start + 1, acc_rdg[0])
         buff.store(idx_start + 2, acc_rdg[1])
@@ -273,13 +276,19 @@ def process_reading(
         buff.store(idx_start + 19, estimated_altitude)
         buff.store(idx_start + 20, estimator.velocity)
 
+        buff.store(idx_start + 21, prev_frame_time)
+
         reading_num += 1
 
     # Garbage collect every third reading, unless we took a GPS reading this
     # period, in which case skip this garbage collection entirely
-    if gps_reading_count % 3 == 0 and not fresh_gps:
-        gc.collect()
-    gps_reading_count += 1
+    # if gps_reading_count % 3 == 0 and not fresh_gps:
+    #     gc.collect()
+    # gps_reading_count += 1
+
+    gc.collect()
+
+    prev_frame_time = float(time.ticks_diff(time.ticks_us(), microtime_start))
 
 
 def update_mode() -> None:
@@ -556,12 +565,13 @@ def _init_board(config: dict) -> None:
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin
+    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time
 
     mode = _MODE_INITIALIZE
 
     init_time = time.ticks_ms()
     launch_time_ms = init_time  # launch time will be reset when liftoff is detected
+    prev_frame_time = 0
 
     with open("/config.json", "r") as f:
         config = json.loads(f.read())
@@ -697,7 +707,7 @@ def _build_header_str() -> str:
         f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
     )
 
-    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_tilt (deg), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s)"
+    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_tilt (deg), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s), prev_frame_time (μs)"
 
     return f"{name_hdr_str},{placeholder_str},{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
 
@@ -707,9 +717,9 @@ def _write_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">fffffffffffffffffffff", entry))
+        unpacked = list(unpack(">ffffffffffffffffffffff", entry))
         unpacked[0] -= time_offset_ms
-        adjusted_ground_readings.append(pack(">fffffffffffffffffffff", *unpacked))
+        adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
 
     header_str = _build_header_str()
 
@@ -736,15 +746,17 @@ def _write_data() -> None:
                         (
                             ", ".join(
                                 str(x)
-                                for x in unpack(">fffffffffffffffffffff", packed_reading)
+                                for x in unpack(
+                                    ">ffffffffffffffffffffff", packed_reading
+                                )
                             )
                             + "\n"
                         ).encode("UTF-8")
                     )
-                reading = [0.0] * 21
+                reading = [0.0] * 22
                 for i in range(reading_num):
-                    for j in range(21):
-                        reading[j] = buff.retrieve_from(i * 21 + j)
+                    for j in range(22):
+                        reading[j] = buff.retrieve_from(i * 22 + j)
                     d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
     else:
         if header_str is not None:
@@ -752,13 +764,13 @@ def _write_data() -> None:
         for packed_reading in adjusted_ground_readings:
             print(
                 ", ".join(
-                    str(x) for x in unpack(">fffffffffffffffffffff", packed_reading)
+                    str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading)
                 )
             )
-        reading = [0.0] * 21
+        reading = [0.0] * 22
         for i in range(reading_num):
-            for j in range(21):
-                reading[j] = buff.retrieve_from(i * 21 + j)
+            for j in range(22):
+                reading[j] = buff.retrieve_from(i * 22 + j)
             print(", ".join(str(x) for x in reading))
 
 

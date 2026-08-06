@@ -17,8 +17,6 @@ import datetime as dt
 from itertools import pairwise
 import statistics
 import matplotlib.pyplot as plt
-
-
 import io
 import base64
 
@@ -56,6 +54,8 @@ def parse_csv(filename: str) -> list:
 
 
 def dm2dd(dm: str) -> str:
+    if len(dm) < 2:
+        return str(0)
     dd = float(dm[0:2])
     mm = float(dm[2:]) / 60
     return str(dd + mm)
@@ -193,6 +193,7 @@ def generate_table(data: list) -> str:
                 - int(float(data[stage_idxs[0]["ignition"]]["time (ms)"]))
             )
         )
+        tilt_stage1 = float(data[stage_idxs[0]["ignition"]]["est_tilt (deg)"])
         if len(stage_idxs) > 1:
             # hell yeah
 
@@ -230,6 +231,8 @@ def generate_table(data: list) -> str:
             duration_stage2 = dt.timedelta(milliseconds=(0))
             tilt_stage2 = None
     else:
+        tilt_stage1 = 0.0
+        tilt_stage2 = None
         duration_stage1 = dt.timedelta(seconds=0)
         velocity_stage2_row = ""
         altitude_stage2_row = ""
@@ -237,16 +240,9 @@ def generate_table(data: list) -> str:
 
     altitude_ejec_m = float(data[ejec_idx]["est_alt (m)"])
 
-    tilt_stage1 = float(data[stage_idxs[0]["ignition"]]["est_tilt (deg)"])
     tilt_ejec = float(data[ejec_idx]["est_tilt (deg)"])
 
-    frametimes_raw = [
-        float(row2["time (ms)"]) - float(row1["time (ms)"])
-        for (row1, row2) in pairwise(data[1:])
-    ]
-    frametimes = [
-        frametime for frametime in frametimes_raw if frametime > 0 and frametime < 500
-    ]
+    frametimes = [int(float(row["prev_frame_time (μs)"])) for row in data[1:]]
     frametime_percentiles = statistics.quantiles(frametimes, n=100, method="inclusive")
 
     return f"""
@@ -392,19 +388,24 @@ def generate_table(data: list) -> str:
                 <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
+            </tr>
+            <tr>
+                <td class="tg-cly1">CPU Utilization (%)</td>
+                <td class="tg-cly1">{100*(statistics.mean(frametimes)/(1_000_000/45)):.2f}</td>
+                <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
             </tr>
             <tr>
-                <td class="tg-cly1">Frame Time (Avg, StdDev)</td>
-                <td class="tg-cly1">{statistics.mean(frametimes):.2f}</td>
-                <td class="tg-cly1">{statistics.pstdev(frametimes):.2f}</td>
+                <td class="tg-cly1">Frame Time (μs) (Avg, StdDev)</td>
+                <td class="tg-cly1">{statistics.mean(frametimes):,.2f}</td>
+                <td class="tg-cly1">{statistics.pstdev(frametimes):,.2f}</td>
                 <td class="tg-0lax"></td>
             </tr>
             <tr>
-                <td class="tg-cly1">Frame Time (95th %, 99th %, Worst)</td>
-                <td class="tg-cly1">{frametime_percentiles[94]:.2f}</td>
-                <td class="tg-cly1">{frametime_percentiles[98]:.2f}</td>
-                <td class="tg-cly1">{max(frametimes):.2f}</td>
+                <td class="tg-cly1">Frame Time (μs) (95th %, 99th %, Worst)</td>
+                <td class="tg-cly1">{frametime_percentiles[94]:,.2f}</td>
+                <td class="tg-cly1">{frametime_percentiles[98]:,.2f}</td>
+                <td class="tg-cly1">{max(frametimes):,.2f}</td>
             </tr>
             <tr>
                 <td class="tg-cly1">Battery Level (Start, End)</td>
@@ -422,20 +423,21 @@ def generate_table(data: list) -> str:
     </table>
 """
 
+
 def fig_to_base64(fig):
+    # From https://stackoverflow.com/a/49016797
     img = io.BytesIO()
-    fig.savefig(img, format='png',
-                bbox_inches='tight')
+    fig.savefig(img, format="png", bbox_inches="tight")
     img.seek(0)
 
     return base64.b64encode(img.getvalue())
 
-def write_motion_plot(data: list, page_title: str) -> str:
+
+def generate_motion_plot(data: list, page_title: str) -> str:
     fig, ax = plt.subplots()
     ax.plot([1, 2, 3, 4], [1, 4, 2, 3])
-    #fig.savefig(f"Motion-{page_title}.png")
     encoded = fig_to_base64(fig)
-    return '<img src="data:image/png;base64, {}">'.format(encoded.decode('utf-8'))
+    return '<img src="data:image/png;base64, {}">'.format(encoded.decode("utf-8"))
 
 
 def write_html(data: list) -> None:
@@ -457,7 +459,7 @@ def write_html(data: list) -> None:
         </style>
     </head>"""
     html += generate_table(data)
-    html += write_motion_plot(data, page_title)
+    html += generate_motion_plot(data, page_title)
     html += f"""
 </html>"""
 
