@@ -427,7 +427,7 @@ def generate_table(data: list) -> str:
 def fig_to_base64(fig):
     # From https://stackoverflow.com/a/49016797
     img = io.BytesIO()
-    fig.savefig(img, format="png", bbox_inches="tight")
+    fig.savefig(img, format="png", bbox_inches="tight", dpi=100)
     img.seek(0)
 
     return base64.b64encode(img.getvalue())
@@ -435,7 +435,14 @@ def fig_to_base64(fig):
 
 def generate_motion_plot(data: list, page_title: str) -> str:
     fig, ax = plt.subplots()
-    ax.plot([1, 2, 3, 4], [1, 4, 2, 3])
+    x = [int(row["time (ms)"]) for row in data[1:get_ejec_idx(data)]]
+    y1 = [float(row["est_alt (m)"]) for row in data[1:get_ejec_idx(data)]]
+    y2 = [float(row["acc_x (m/s^2)"]) for row in data[1:get_ejec_idx(data)]]
+    y3 = [float(row["est_speed(m/s)"]) for row in data[1:get_ejec_idx(data)]]
+    ax.plot(x, y1, label='Altitude')
+    ax.plot(x, y2, label='Vertical Acceleration')
+    ax.plot(x, y3, label='Estimated Speed')
+    ax.legend()
     encoded = fig_to_base64(fig)
     return '<img src="data:image/png;base64, {}">'.format(encoded.decode("utf-8"))
 
