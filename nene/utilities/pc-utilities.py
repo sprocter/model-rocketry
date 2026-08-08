@@ -17,6 +17,7 @@ import datetime as dt
 from itertools import pairwise
 import statistics
 import matplotlib.pyplot as plt
+from matplotlib.ticker import AutoMinorLocator
 import io
 import base64
 
@@ -113,7 +114,7 @@ def get_ejec_idx(data: list) -> int:
         )
         diffs.append(float(data[i]["acc_x (m/s^2)"]) - avg_x_accs)
     # Now get the index where this spike occurs
-    return diffs.index(max(diffs)) + 6
+    return diffs.index(max(diffs)) + 7
 
 
 def get_touchdown_idx(data: list) -> int:
@@ -178,6 +179,11 @@ def generate_table(data: list) -> str:
     altitude_m = max(float(row["est_alt (m)"]) for row in data[1:]) - init_alti
     velocity_ms = max(float(row["est_speed(m/s)"]) for row in data[1:])
     accel_mss = max(float(row["acc_x (m/s^2)"]) for row in data[1 : ejec_idx - 1])
+
+    # Print these now cuz it sucks waiting on the whole file to process
+    print(
+        f"Max: Altitude {altitude_m:,.2f}m\tVelocity {velocity_ms:,.2f}m/s\tAcceleration {accel_mss:,.2f}m/s/s"
+    )
 
     velocity_rod_ms = get_rod_velocity(data, init_alti)
     velocity_ejec_ms = float(data[ejec_idx]["est_speed(m/s)"])
@@ -424,6 +430,24 @@ def generate_table(data: list) -> str:
 """
 
 
+def get_spin(data: list[dict]) -> list[float]:
+    spin = [0]
+    for x, y in pairwise(row["est_roll(deg)"] for row in data):
+        x = float(x)
+        y = float(y)
+        if abs(y - x) < 180:
+            spin.append((y - x)*45)
+        else:  # rollover
+            sign = 1
+            if y - x > 0:
+                sign = -1
+            if y > x:
+                spin.append((sign * (y - x - 360))*45)
+            else:
+                spin.append((sign * (y - x + 360))*45)
+    return spin
+
+
 def fig_to_base64(fig):
     # From https://stackoverflow.com/a/49016797
     img = io.BytesIO()
@@ -433,18 +457,50 @@ def fig_to_base64(fig):
     return base64.b64encode(img.getvalue())
 
 
-def generate_motion_plot(data: list, page_title: str) -> str:
+def generate_plot(
+    data: list[dict],
+    ydata: list[list[float]],
+    ylabels: list[str],
+    yaxislabel: str,
+) -> str:
     fig, ax = plt.subplots()
-    x = [int(row["time (ms)"]) for row in data[1:get_ejec_idx(data)]]
-    y1 = [float(row["est_alt (m)"]) for row in data[1:get_ejec_idx(data)]]
-    y2 = [float(row["acc_x (m/s^2)"]) for row in data[1:get_ejec_idx(data)]]
-    y3 = [float(row["est_speed(m/s)"]) for row in data[1:get_ejec_idx(data)]]
-    ax.plot(x, y1, label='Altitude')
-    ax.plot(x, y2, label='Vertical Acceleration')
-    ax.plot(x, y3, label='Estimated Speed')
+    x = [int(row["time (ms)"]) / 1000 for row in data[1 : len(ydata[0]) + 1]]
+    for i in range(len(ydata)):
+        ax.plot(x, ydata[i], label=ylabels[i])
     ax.legend()
+    ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.set_xlabel("Time (seconds)")
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.set_ylabel(yaxislabel)
+    ax.grid(which="both", linestyle=":")
     encoded = fig_to_base64(fig)
-    return '<img src="data:image/png;base64, {}">'.format(encoded.decode("utf-8"))
+    return '<img src="data:image/png;base64, {}" />'.format(encoded.decode("utf-8"))
+
+
+def generate_motion_plot(data: list) -> str:
+    range_end = get_ejec_idx(data)
+    ydata = []
+    ydata.append([float(row["est_alt (m)"]) for row in data[1:range_end]])
+    ydata.append([float(row["acc_x (m/s^2)"]) for row in data[1:range_end]])
+    ydata.append([float(row["est_speed(m/s)"]) for row in data[1:range_end]])
+    ylabels = ["Altitude (m)", "Vertical Acceleration (m/s)", "Estimated Speed (m/s/s)"]
+    return generate_plot(data, ydata, ylabels, "Meters")
+
+
+def generate_alti_plot(data: list) -> str:
+    ydata = []
+    ydata.append([float(row["baro_alt (m)"]) for row in data[1:]])
+    return generate_plot(data, ydata, ["Altitude (m)"], "Meters")
+
+
+def generate_orientation_plot(data: list) -> str:
+    range_end = get_ejec_idx(data)
+    ydata = []
+    #ydata.append(get_spin(data[1:range_end]))
+    ydata.append([float(row["est_tilt (deg)"]) for row in data[1:range_end]])
+    #ylabels = ["Spin (°/s)", "Tilt (°)"]
+    ylabels = ["Tilt (°)"]
+    return generate_plot(data, ydata, ylabels, "Degrees")
 
 
 def write_html(data: list) -> None:
@@ -466,7 +522,9 @@ def write_html(data: list) -> None:
         </style>
     </head>"""
     html += generate_table(data)
-    html += generate_motion_plot(data, page_title)
+    html += generate_motion_plot(data)
+    html += generate_alti_plot(data)
+    html += generate_orientation_plot(data)
     html += f"""
 </html>"""
 

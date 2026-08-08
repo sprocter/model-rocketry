@@ -190,7 +190,7 @@ def process_reading(
     fresh_gps: bool,
     gps_buffer: bytearray,
 ) -> None:
-    global reading_num, gps_reading_count, apogee, prev_frame_time
+    global reading_num, apogee, prev_frame_time
 
     timestamp = int.from_bytes(timestamp_param, "little")
     raw_altitude = alti.decode_alti(alti_buffer)
@@ -279,12 +279,6 @@ def process_reading(
         buff.store(idx_start + 21, prev_frame_time)
 
         reading_num += 1
-
-    # Garbage collect every third reading, unless we took a GPS reading this
-    # period, in which case skip this garbage collection entirely
-    # if gps_reading_count % 3 == 0 and not fresh_gps:
-    #     gc.collect()
-    # gps_reading_count += 1
 
     gc.collect()
 
@@ -565,7 +559,7 @@ def _init_board(config: dict) -> None:
 
 
 def initialize():
-    global mode, reading_num, gps_reading_count, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time
+    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time
 
     mode = _MODE_INITIALIZE
 
@@ -595,7 +589,6 @@ def initialize():
         config["orient"]["invert"],
     )
 
-    gps_reading_count = 0
     reading_num = 0  # _LAUNCHPAD_READINGS + 1
     alti.read_raw()
     initial_altitude = alti.decode_alti(alti.buffer)
