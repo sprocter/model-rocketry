@@ -496,10 +496,9 @@ def generate_alti_plot(data: list) -> str:
 def generate_orientation_plot(data: list) -> str:
     range_end = get_ejec_idx(data)
     ydata = []
-    #ydata.append(get_spin(data[1:range_end]))
+    ydata.append(get_spin(data[1:range_end]))
     ydata.append([float(row["est_tilt (deg)"]) for row in data[1:range_end]])
-    #ylabels = ["Spin (°/s)", "Tilt (°)"]
-    ylabels = ["Tilt (°)"]
+    ylabels = ["Spin (°/s)", "Tilt (°)"]
     return generate_plot(data, ydata, ylabels, "Degrees")
 
 
