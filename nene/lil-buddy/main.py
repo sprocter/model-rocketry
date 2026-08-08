@@ -91,9 +91,12 @@ _MODE_TO_NPXL = {
 _GPS_CONNECTED = False
 
 # 2M Floats is 8MiB, which is how much PSRAM we have.
-# This gives us over half an hour of data storing 22 values per reading, 45
+# This gives us almost half an hour of data storing 25 values per reading, 45
 # times a second.
 _BUFFER_SIZE = const(2_000_000)
+_FLOATS_PER_FRAME = const(25)
+_PACK_FORMAT = const(">fffffffffffffffffffffffff")
+_EMPTY_READING = (0,0,0)
 
 ####################################
 # BEGIN Interrupt Service Routines #
@@ -117,10 +120,15 @@ def get_sensor_readings(timer: Timer) -> None:
     timestamp = time.ticks_diff(time.ticks_ms(), launch_time_ms)
     alti.read_raw()
     accel.read_raw()
+    if has_hires_accel:
+        hires_accel.read_raw()
+        hires_accel_buffer = hires_accel.buffer
+    else:
+        hires_accel_buffer = None
     # Devices burst read all their values into one buffer -- we only decode
     # what we need. So, if the accel and gyro are aliased, we should not
     # trigger a second read.
-    if accel != gyro:
+    if accel != gyro and not has_hires_accel:
         gyro.read_raw()
     mag.read_raw()
 
@@ -138,6 +146,7 @@ def get_sensor_readings(timer: Timer) -> None:
         alti.buffer,
         mag.buffer,
         accel.buffer,
+        hires_accel_buffer,
         gyro.buffer,
         fresh_gps,
         gps.buffer,
@@ -186,6 +195,7 @@ def process_reading(
     alti_buffer: bytearray,
     mag_buffer: bytearray,
     acc_buffer: bytearray,
+    hires_acc_buffer: bytearray,
     gyro_buffer: bytearray,
     fresh_gps: bool,
     gps_buffer: bytearray,
@@ -202,6 +212,10 @@ def process_reading(
 
     acc_rdg = accel.decode_accel(acc_buffer)
     estimator.acceleration = acc_rdg
+    if has_hires_accel:
+        hires_acc_rdg = hires_accel.decode_accel(hires_acc_buffer)
+    else:
+        hires_acc_rdg = _EMPTY_READING
 
     gyro_rdg = gyro.decode_gyro(gyro_buffer)
     estimator.gyroscope = gyro_rdg
@@ -223,11 +237,14 @@ def process_reading(
         gps.decode_reading(gps_buffer)
     if mode == _MODE_LAUNCHPAD:
         packed_reading = pack(
-            ">ffffffffffffffffffffff",
+            _PACK_FORMAT,
             float(timestamp),
             acc_rdg[0],
             acc_rdg[1],
             acc_rdg[2],
+            hires_acc_rdg[0],
+            hires_acc_rdg[1],
+            hires_acc_rdg[2],
             gyro_rdg[0],
             gyro_rdg[1],
             gyro_rdg[2],
@@ -249,34 +266,37 @@ def process_reading(
         )
         ground_readings.append(packed_reading)
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
-        idx_start = reading_num * 22
+        idx_start = reading_num * _FLOATS_PER_FRAME
         buff.store(idx_start + 0, float(timestamp))
         buff.store(idx_start + 1, acc_rdg[0])
         buff.store(idx_start + 2, acc_rdg[1])
         buff.store(idx_start + 3, acc_rdg[2])
-        buff.store(idx_start + 4, gyro_rdg[0])
-        buff.store(idx_start + 5, gyro_rdg[1])
-        buff.store(idx_start + 6, gyro_rdg[2])
-        buff.store(idx_start + 7, mag_rdg[0])
-        buff.store(idx_start + 8, mag_rdg[1])
-        buff.store(idx_start + 9, mag_rdg[2])
-        buff.store(idx_start + 10, barometric_altitude)
-        buff.store(idx_start + 11, gps.altitude - initial_gps_altitude)
-        buff.store(idx_start + 12, ambient_temp)
+        buff.store(idx_start + 4, hires_acc_rdg[0])
+        buff.store(idx_start + 5, hires_acc_rdg[1])
+        buff.store(idx_start + 6, hires_acc_rdg[2])
+        buff.store(idx_start + 7, gyro_rdg[0])
+        buff.store(idx_start + 8, gyro_rdg[1])
+        buff.store(idx_start + 9, gyro_rdg[2])
+        buff.store(idx_start + 10, mag_rdg[0])
+        buff.store(idx_start + 11, mag_rdg[1])
+        buff.store(idx_start + 12, mag_rdg[2])
+        buff.store(idx_start + 13, barometric_altitude)
+        buff.store(idx_start + 14, gps.altitude - initial_gps_altitude)
+        buff.store(idx_start + 15, ambient_temp)
 
         # TODO: Should probably check latNS and lonEW once this has been
         # verified to work
-        buff.store(idx_start + 13, float(gps.lat))
-        buff.store(idx_start + 14, float(gps.lon))
+        buff.store(idx_start + 16, float(gps.lat))
+        buff.store(idx_start + 17, float(gps.lon))
 
-        buff.store(idx_start + 15, estimator.tilt)
-        buff.store(idx_start + 16, estimator.heading)
-        buff.store(idx_start + 17, estimator.pitch)
-        buff.store(idx_start + 18, estimator.roll)
-        buff.store(idx_start + 19, estimated_altitude)
-        buff.store(idx_start + 20, estimator.velocity)
+        buff.store(idx_start + 18, estimator.tilt)
+        buff.store(idx_start + 19, estimator.heading)
+        buff.store(idx_start + 20, estimator.pitch)
+        buff.store(idx_start + 21, estimator.roll)
+        buff.store(idx_start + 22, estimated_altitude)
+        buff.store(idx_start + 23, estimator.velocity)
 
-        buff.store(idx_start + 21, prev_frame_time)
+        buff.store(idx_start + 24, prev_frame_time)
 
         reading_num += 1
 
@@ -387,7 +407,7 @@ def _update_led() -> None:
             leds.append(Signal(Pin(leds[1], Pin.OUT), invert=True))
             leds[2].on()
         elif mode == _MODE_FINISHED:
-            # Green LED on, to be blinked by the buzzer timer
+            # Green LED on
             # We remove the orange LED signal; the pin will be used for
             # user-input to switch to wifi mode
             leds[0].on()
@@ -459,7 +479,7 @@ def _init_radio(config: dict):
 
 
 def _init_devices(config: dict) -> None:
-    global accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED
+    global accel, hires_accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED, has_hires_accel
     i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
 
@@ -496,6 +516,13 @@ def _init_devices(config: dict) -> None:
     else:
         raise OSError(f"No accelerometer connected!")
 
+    if ISM330DHCX.ADDR in connected_devices and not isinstance(accel, ISM330DHCX):
+        has_hires_accel = True
+        hires_accel = ISM330DHCX(i2c)
+        hires_accel.initialize(config["ISM330DHCX"])
+    else:
+        has_hires_accel = False
+
     # Both ISM330DHCX and ICM20649 have the same range, but the ISM330DHCX is
     # more accurate, so we prefer it. We also alias the object if we are using
     # the same device for the accelerometer and gyroscope.
@@ -503,7 +530,7 @@ def _init_devices(config: dict) -> None:
         if isinstance(accel, ISM330DHCX):
             gyro = accel
         else:
-            gyro = ISM330DHCX(i2c)
+            gyro = hires_accel
             gyro.initialize(config["ISM330DHCX"])
     elif ICM20649.ADDR in connected_devices:
         if isinstance(accel, ICM20649):
@@ -700,7 +727,7 @@ def _build_header_str() -> str:
         f"MCU Temp (Start),{initial_mcu_temp},MCU Temp (End),{esp32.mcu_temperature()}"
     )
 
-    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_tilt (deg), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s), prev_frame_time (μs)"
+    label_hdr_str = "time (ms), acc_x (m/s^2), acc_y (m/s^2), acc_z (m/s^2), h_acc_x (m/s^2), h_acc_y (m/s^2), h_acc_z (m/s^2), gyro_x (dps), gyro_y (dps), gyro_z (dps), mag_x (μT), mag_y (μT), mag_z (μT), baro_alt (m), gps_alt (m), temp (c), lat (ddmm.mmmm), lon(ddmm.mmmm), est_tilt (deg), est_yaw (deg), est_pitch (deg), est_roll(deg), est_alt (m), est_speed(m/s), prev_frame_time (μs)"
 
     return f"{name_hdr_str},{placeholder_str},{date_hdr_str},{batt_hdr_str},{mcu_hdr_str},\n{label_hdr_str}\n"
 
@@ -710,9 +737,9 @@ def _write_data() -> None:
     adjusted_ground_readings = []
     while len(ground_readings) > 0:
         entry = ground_readings.popleft()
-        unpacked = list(unpack(">ffffffffffffffffffffff", entry))
+        unpacked = list(unpack(_PACK_FORMAT, entry))
         unpacked[0] -= time_offset_ms
-        adjusted_ground_readings.append(pack(">ffffffffffffffffffffff", *unpacked))
+        adjusted_ground_readings.append(pack(_PACK_FORMAT, *unpacked))
 
     header_str = _build_header_str()
 
@@ -740,16 +767,16 @@ def _write_data() -> None:
                             ", ".join(
                                 str(x)
                                 for x in unpack(
-                                    ">ffffffffffffffffffffff", packed_reading
+                                    _PACK_FORMAT, packed_reading
                                 )
                             )
                             + "\n"
                         ).encode("UTF-8")
                     )
-                reading = [0.0] * 22
+                reading = [0.0] * _FLOATS_PER_FRAME
                 for i in range(reading_num):
-                    for j in range(22):
-                        reading[j] = buff.retrieve_from(i * 22 + j)
+                    for j in range(_FLOATS_PER_FRAME):
+                        reading[j] = buff.retrieve_from(i * _FLOATS_PER_FRAME + j)
                     d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
     else:
         if header_str is not None:
@@ -757,13 +784,13 @@ def _write_data() -> None:
         for packed_reading in adjusted_ground_readings:
             print(
                 ", ".join(
-                    str(x) for x in unpack(">ffffffffffffffffffffff", packed_reading)
+                    str(x) for x in unpack(_PACK_FORMAT, packed_reading)
                 )
             )
-        reading = [0.0] * 22
+        reading = [0.0] * _FLOATS_PER_FRAME
         for i in range(reading_num):
-            for j in range(22):
-                reading[j] = buff.retrieve_from(i * 22 + j)
+            for j in range(_FLOATS_PER_FRAME):
+                reading[j] = buff.retrieve_from(i * _FLOATS_PER_FRAME + j)
             print(", ".join(str(x) for x in reading))
 
 
