@@ -35,16 +35,9 @@ _REG_TEMP_CONFIG = const(0x53)  # pg 69, 8.3.18
 
 _EXPECTED_DEVICE_ID = const(0xE1)  # pg 38, 8.1.1
 
-_GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
+# _GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
+_GYRO_SENSITIVITY = const(65.5)  # pg 12, 3.1
 _ACCEL_SENSITIVITY = const(1024)  # pg 13, 3.2
-
-# _ACC_X_ERR = const(0.10822296)
-# _ACC_Y_ERR = const(-0.21025884)
-# _ACC_Z_ERR = const(0.58796824)
-# _GYRO_X_ERR = const(-0.58353684)
-# _GYRO_Y_ERR = const(1.4780478)
-# _GYRO_Z_ERR = const(-0.4469513)
-
 
 _ACCEL_ADJUST = const(G_TO_MS2 / _ACCEL_SENSITIVITY)
 
@@ -99,10 +92,15 @@ class ICM20649:
         # 00011000
         self.i2c.writeto_mem(ADDR, _REG_GYRO_SMPLRT_DIV, b"\x18")
 
+        # # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
+        # # Gyroscope is in full scale, enable gyro DLPF
+        # # 00 011 11 1
+        # self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
+
         # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
-        # Gyroscope is in full scale, enable gyro DLPF
-        # 00 011 11 1
-        self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
+        # Gyroscope is set to 500dps, enable gyro DLPF
+        # 00 011 00 1
+        self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x19")
 
         # Sample rate = 1.1kHz/(1+X), X = 24, ODR = 45.8333Hz
         # 00011000
