@@ -89,4 +89,4 @@ def monitor_charging():
         time.sleep(5)
 
 
-monitor_charging()
+print_filesystem_space()

@@ -464,7 +464,7 @@ def generate_plot(
     yaxislabel: str,
 ) -> str:
     fig, ax = plt.subplots()
-    x = [int(row["time (ms)"]) / 1000 for row in data[1 : len(ydata[0]) + 1]]
+    x = [int(float(row["time (ms)"])) / 1000 for row in data[1 : len(ydata[0]) + 1]]
     for i in range(len(ydata)):
         ax.plot(x, ydata[i], label=ylabels[i])
     ax.legend()
