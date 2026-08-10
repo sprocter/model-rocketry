@@ -54,6 +54,15 @@ def parse_csv(filename: str) -> list:
     return ret
 
 
+def fix_timestamp(data: list[dict]) -> list[dict]:
+    for i in range(len(data)):
+        if i < 2:
+            continue
+        if float(data[i]["time (ms)"]) - float(data[i - 1]["time (ms)"]) > 500:
+            data[i]["time (ms)"] = float(data[i - 1]["time (ms)"]) + 22
+    return data
+
+
 def dm2dd(dm: str) -> str:
     if len(dm) < 2:
         return str(0)
@@ -436,15 +445,15 @@ def get_spin(data: list[dict]) -> list[float]:
         x = float(x)
         y = float(y)
         if abs(y - x) < 180:
-            spin.append((y - x)*45)
+            spin.append((y - x) * 45)
         else:  # rollover
             sign = 1
             if y - x > 0:
                 sign = -1
             if y > x:
-                spin.append((sign * (y - x - 360))*45)
+                spin.append((sign * (y - x - 360)) * 45)
             else:
-                spin.append((sign * (y - x + 360))*45)
+                spin.append((sign * (y - x + 360)) * 45)
     return spin
 
 
@@ -536,5 +545,6 @@ def write_html(data: list) -> None:
 
 filename = sys.argv[1]
 parsed_csv = parse_csv(filename)
-write_html(parsed_csv)
-write_kml(parsed_csv)
+fixed_csv = fix_timestamp(parsed_csv)
+write_html(fixed_csv)
+write_kml(fixed_csv)
