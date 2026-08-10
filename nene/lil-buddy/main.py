@@ -45,7 +45,7 @@ _RELENG_DEVELOP = const(1)
 _RELENG_TEST_NOGPS = const(2)
 _RELENG_TEST = const(3)
 _RELENG_RELEASE = const(4)
-_RELEASE_LEVEL = const(_RELENG_RELEASE)
+_RELEASE_LEVEL = const(_RELENG_DEVELOP_NOGPS)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -239,18 +239,18 @@ def process_reading(
         packed_reading = pack(
             _PACK_FORMAT,
             float(timestamp),
-            acc_rdg[0],
-            acc_rdg[1],
-            acc_rdg[2],
-            hires_acc_rdg[0],
-            hires_acc_rdg[1],
-            hires_acc_rdg[2],
-            gyro_rdg[0],
-            gyro_rdg[1],
-            gyro_rdg[2],
-            mag_rdg[0],
-            mag_rdg[1],
-            mag_rdg[2],
+            sens_inv[0] * acc_rdg[sens_idx[0]], # X
+            sens_inv[1] * acc_rdg[sens_idx[1]], # Y 
+            sens_inv[2] * acc_rdg[sens_idx[2]], # Z
+            sens_inv[0] * hires_acc_rdg[sens_idx[0]], # X
+            sens_inv[1] * hires_acc_rdg[sens_idx[1]], # Y
+            sens_inv[2] * hires_acc_rdg[sens_idx[2]], # Z
+            sens_inv[0] * gyro_rdg[sens_idx[0]],
+            sens_inv[1] * gyro_rdg[sens_idx[1]],
+            sens_inv[2] * gyro_rdg[sens_idx[2]],
+            sens_inv[0] * mag_rdg[sens_idx[0]],
+            sens_inv[1] * mag_rdg[sens_idx[1]],
+            mag_z_inv * mag_rdg[sens_idx[2]],
             barometric_altitude,
             gps.altitude - initial_gps_altitude,
             ambient_temp,
@@ -268,18 +268,18 @@ def process_reading(
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         idx_start = reading_num * _FLOATS_PER_FRAME
         buff.store(idx_start + 0, float(timestamp))
-        buff.store(idx_start + 1, acc_rdg[0])
-        buff.store(idx_start + 2, acc_rdg[1])
-        buff.store(idx_start + 3, acc_rdg[2])
-        buff.store(idx_start + 4, hires_acc_rdg[0])
-        buff.store(idx_start + 5, hires_acc_rdg[1])
-        buff.store(idx_start + 6, hires_acc_rdg[2])
-        buff.store(idx_start + 7, gyro_rdg[0])
-        buff.store(idx_start + 8, gyro_rdg[1])
-        buff.store(idx_start + 9, gyro_rdg[2])
-        buff.store(idx_start + 10, mag_rdg[0])
-        buff.store(idx_start + 11, mag_rdg[1])
-        buff.store(idx_start + 12, mag_rdg[2])
+        buff.store(idx_start + 1, sens_inv[0] * acc_rdg[sens_idx[0]]) # X
+        buff.store(idx_start + 2, sens_inv[1] * acc_rdg[sens_idx[1]]) # Y
+        buff.store(idx_start + 3, sens_inv[2] * acc_rdg[sens_idx[2]]) # Z
+        buff.store(idx_start + 4, sens_inv[0] * hires_acc_rdg[sens_idx[0]]) # X
+        buff.store(idx_start + 5, sens_inv[1] * hires_acc_rdg[sens_idx[1]]) # Y
+        buff.store(idx_start + 6, sens_inv[2] * hires_acc_rdg[sens_idx[2]]) # Z
+        buff.store(idx_start + 7, sens_inv[0] * gyro_rdg[sens_idx[0]])
+        buff.store(idx_start + 8, sens_inv[1] * gyro_rdg[sens_idx[1]])
+        buff.store(idx_start + 9, sens_inv[2] * gyro_rdg[sens_idx[2]])
+        buff.store(idx_start + 10, sens_inv[0] * mag_rdg[sens_idx[0]])
+        buff.store(idx_start + 11, sens_inv[1] * mag_rdg[sens_idx[1]])
+        buff.store(idx_start + 12, mag_z_inv * mag_rdg[sens_idx[2]])
         buff.store(idx_start + 13, barometric_altitude)
         buff.store(idx_start + 14, gps.altitude - initial_gps_altitude)
         buff.store(idx_start + 15, ambient_temp)
@@ -586,7 +586,7 @@ def _init_board(config: dict) -> None:
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time
+    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time, sens_idx, sens_inv, mag_z_inv
 
     mode = _MODE_INITIALIZE
 
@@ -615,6 +615,12 @@ def initialize():
         config["orient"]["transpose"],
         config["orient"]["invert"],
     )
+
+    # Adjust for sensor mounting constraints
+    sens_idx = config["orient"]["transpose"]
+    sens_inv = [-1 if x else 1 for x in config["orient"]["invert"]]
+    # The MMC5983 inverts its Z axis, weirdly
+    mag_z_inv = -1 * sens_inv[2] if isinstance(mag, MMC5983MA) else sens_inv[2]
 
     reading_num = 0  # _LAUNCHPAD_READINGS + 1
     alti.read_raw()
