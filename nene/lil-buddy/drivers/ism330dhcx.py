@@ -24,17 +24,10 @@ _REG_OUT_TEMP_L = const(0x20)  # Datasheet pg 64
 
 _EXPECTED_DEVICE_ID = const(0x6B)  # Datasheet pg 48
 
-# _ACC_X_ERR = const(-0.058289064)
-# _ACC_Y_ERR = const(0.06798006)
-# _ACC_Z_ERR = const(0.1574564)
-# _GYRO_X_ERR = const(-0.3548993)
-# _GYRO_Y_ERR = const(-0.61809904)
-# _GYRO_Z_ERR = const(0.13999982)
-
 _G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
 _TEMP_ADJUST = const(256)  # Datasheet page 13
 _TEMP_OFFSET = const(25)  # Datasheet page 13
-_GYRO_ADJUST = const(0.140)  # Datasheet pg 10
+_GYRO_ADJUST = const(0.0175)  # Datasheet pg 10
 _ACCEL_ADJUST = const(0.000488 * _G_TO_MS2)  # Datasheet pg 10 #
 
 
@@ -82,8 +75,8 @@ class ISM330DHCX:
 
         # Configure gyroscope using CTRL2_G:
         #   1. ODR to 52 Hz 0011
-        #   2. Fullscale to 4000dps 0001
-        self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x31")
+        #   2. Fullscale to 500dps 0100
+        self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x34")
         time.sleep_ms(100)  # Allow everything to wake up
 
         self.acc_x_err = offsets["ACC_X_ERR"]
