@@ -96,7 +96,10 @@ _GPS_CONNECTED = False
 _BUFFER_SIZE = const(2_000_000)
 _FLOATS_PER_FRAME = const(25)
 _PACK_FORMAT = const(">fffffffffffffffffffffffff")
-_EMPTY_READING = (0,0,0)
+_EMPTY_READING = (0, 0, 0)
+_MAX_HIRES_ACCEL = const(15 * 9.80665)  # The sensor tops out at 16g and 9.80665
+# is earth's standard gravity https://en.wikipedia.org/wiki/Standard_gravity
+
 
 ####################################
 # BEGIN Interrupt Service Routines #
@@ -211,11 +214,19 @@ def process_reading(
     estimator.magnetometer = mag_rdg
 
     acc_rdg = accel.decode_accel(acc_buffer)
-    estimator.acceleration = acc_rdg
+    hires_acc_rdg = _EMPTY_READING
     if has_hires_accel:
         hires_acc_rdg = hires_accel.decode_accel(hires_acc_buffer)
+        if (
+            (abs(hires_acc_rdg[sens_idx[0]]) < _MAX_HIRES_ACCEL)
+            and (abs(hires_acc_rdg[sens_idx[1]]) < _MAX_HIRES_ACCEL)
+            and (abs(hires_acc_rdg[sens_idx[2]]) < _MAX_HIRES_ACCEL)
+        ):
+            estimator.acceleration = hires_acc_rdg
+        else:
+            estimator.acceleration = acc_rdg
     else:
-        hires_acc_rdg = _EMPTY_READING
+        estimator.acceleration = acc_rdg
 
     gyro_rdg = gyro.decode_gyro(gyro_buffer)
     estimator.gyroscope = gyro_rdg
@@ -239,12 +250,12 @@ def process_reading(
         packed_reading = pack(
             _PACK_FORMAT,
             float(timestamp),
-            sens_inv[0] * acc_rdg[sens_idx[0]], # X
-            sens_inv[1] * acc_rdg[sens_idx[1]], # Y 
-            sens_inv[2] * acc_rdg[sens_idx[2]], # Z
-            sens_inv[0] * hires_acc_rdg[sens_idx[0]], # X
-            sens_inv[1] * hires_acc_rdg[sens_idx[1]], # Y
-            sens_inv[2] * hires_acc_rdg[sens_idx[2]], # Z
+            sens_inv[0] * acc_rdg[sens_idx[0]],  # X
+            sens_inv[1] * acc_rdg[sens_idx[1]],  # Y
+            sens_inv[2] * acc_rdg[sens_idx[2]],  # Z
+            sens_inv[0] * hires_acc_rdg[sens_idx[0]],  # X
+            sens_inv[1] * hires_acc_rdg[sens_idx[1]],  # Y
+            sens_inv[2] * hires_acc_rdg[sens_idx[2]],  # Z
             sens_inv[0] * gyro_rdg[sens_idx[0]],
             sens_inv[1] * gyro_rdg[sens_idx[1]],
             sens_inv[2] * gyro_rdg[sens_idx[2]],
@@ -268,12 +279,12 @@ def process_reading(
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         idx_start = reading_num * _FLOATS_PER_FRAME
         buff.store(idx_start + 0, float(timestamp))
-        buff.store(idx_start + 1, sens_inv[0] * acc_rdg[sens_idx[0]]) # X
-        buff.store(idx_start + 2, sens_inv[1] * acc_rdg[sens_idx[1]]) # Y
-        buff.store(idx_start + 3, sens_inv[2] * acc_rdg[sens_idx[2]]) # Z
-        buff.store(idx_start + 4, sens_inv[0] * hires_acc_rdg[sens_idx[0]]) # X
-        buff.store(idx_start + 5, sens_inv[1] * hires_acc_rdg[sens_idx[1]]) # Y
-        buff.store(idx_start + 6, sens_inv[2] * hires_acc_rdg[sens_idx[2]]) # Z
+        buff.store(idx_start + 1, sens_inv[0] * acc_rdg[sens_idx[0]])  # X
+        buff.store(idx_start + 2, sens_inv[1] * acc_rdg[sens_idx[1]])  # Y
+        buff.store(idx_start + 3, sens_inv[2] * acc_rdg[sens_idx[2]])  # Z
+        buff.store(idx_start + 4, sens_inv[0] * hires_acc_rdg[sens_idx[0]])  # X
+        buff.store(idx_start + 5, sens_inv[1] * hires_acc_rdg[sens_idx[1]])  # Y
+        buff.store(idx_start + 6, sens_inv[2] * hires_acc_rdg[sens_idx[2]])  # Z
         buff.store(idx_start + 7, sens_inv[0] * gyro_rdg[sens_idx[0]])
         buff.store(idx_start + 8, sens_inv[1] * gyro_rdg[sens_idx[1]])
         buff.store(idx_start + 9, sens_inv[2] * gyro_rdg[sens_idx[2]])
@@ -771,10 +782,7 @@ def _write_data() -> None:
                     d.write(
                         (
                             ", ".join(
-                                str(x)
-                                for x in unpack(
-                                    _PACK_FORMAT, packed_reading
-                                )
+                                str(x) for x in unpack(_PACK_FORMAT, packed_reading)
                             )
                             + "\n"
                         ).encode("UTF-8")
@@ -788,11 +796,7 @@ def _write_data() -> None:
         if header_str is not None:
             print(header_str, end="")
         for packed_reading in adjusted_ground_readings:
-            print(
-                ", ".join(
-                    str(x) for x in unpack(_PACK_FORMAT, packed_reading)
-                )
-            )
+            print(", ".join(str(x) for x in unpack(_PACK_FORMAT, packed_reading)))
         reading = [0.0] * _FLOATS_PER_FRAME
         for i in range(reading_num):
             for j in range(_FLOATS_PER_FRAME):
