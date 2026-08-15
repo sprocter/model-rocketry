@@ -70,8 +70,10 @@ def _get_input_enc(
 def _core_config(config: dict) -> None:
     if "system" not in config:
         config["system"] = {}
-    suffix = random.randrange(0,9999)
-    config["system"]["name"] = _get_input("system","name",f"Nene{str(suffix)}","Device Name", config)
+    suffix = random.randrange(0, 9999)
+    config["system"]["name"] = _get_input(
+        "system", "name", f"Nene{str(suffix)}", "Device Name", config
+    )
     if "wifi" not in config:
         config["wifi"] = {}
     config["wifi"]["name"] = _get_input("wifi", "name", "", "Wi-Fi SSID Name", config)
@@ -92,13 +94,15 @@ def _core_config(config: dict) -> None:
         "Big-Buddy Address (0-255)",
         config,
     )
-    config["lora"]["freq"] = float(_get_input_int(
-        "lora",
-        "freq",
-        random.randint(902, 928),
-        "LoRa Frequency (902-928)",
-        config,
-    ))
+    config["lora"]["freq"] = float(
+        _get_input_int(
+            "lora",
+            "freq",
+            random.randint(902, 928),
+            "LoRa Frequency (902-928)",
+            config,
+        )
+    )
     config["lora"]["key"] = _get_input_enc(
         "lora", "key", 256, "Encryption Key (256 bit, hexlified bytes)", config
     )
@@ -111,7 +115,7 @@ def _core_config(config: dict) -> None:
     )
 
 
-def _part_1(config: dict) -> None:
+def _basic_config(config: dict) -> None:
     print("")
     print("Part 1: Core Configuration")
     print("--------------------------")
@@ -206,7 +210,7 @@ def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     gyro_xs, gyro_ys, gyro_zs = [], [], []
 
     print("ICM20649 (Accelerometer & Gyroscope) Calibration.")
-    print("Directions: Set the device face-up on a flat surface and hold it still.")
+    print("Directions: Put the device in its launch orientation and hold it still.")
     print("Calibration begins in 10 seconds.")
     time.sleep(10)
     print(f"Calibration beginning now, it will take {duration} seconds...")
@@ -226,11 +230,11 @@ def _icm20649_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
         time.sleep_ms(23)
 
     config["ICM20649"] = {}
-    if(config["orient"]["transpose"] == (2,1,0)):
+    if config["orient"]["transpose"] == (2, 1, 0):
         config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs) - _G_TO_MS2
         config["ICM20649"]["ACC_Y_ERR"] = sum(acc_ys) / len(acc_ys)
-    elif(config["orient"]["transpose"] == (2,0,1)):
-        config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs) 
+    elif config["orient"]["transpose"] == (2, 0, 1):
+        config["ICM20649"]["ACC_X_ERR"] = sum(acc_xs) / len(acc_xs)
         config["ICM20649"]["ACC_Y_ERR"] = sum(acc_ys) / len(acc_ys) + _G_TO_MS2
     else:
         print("FATAL ERROR: Attempting to calibrate ICM20649 with unknown orientation")
@@ -257,7 +261,7 @@ def _ism330DHCX_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     gyro_xs, gyro_ys, gyro_zs = [], [], []
 
     print("ISM330DHCX (Accelerometer & Gyroscope) Calibration.")
-    print("Directions: Set the device face-up on a flat surface and hold it still.")
+    print("Directions: Put the device in its launch orientation and hold it still.")
     print("Calibration begins in 10 seconds.")
     time.sleep(10)
     print(f"Calibration beginning now, it will take {duration} seconds...")
@@ -297,7 +301,7 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
     xs, ys, zs = [], [], []
 
     print("ADXL375 (Accelerometer) Calibration.")
-    print("Directions: Set the device face-up on a flat surface and hold it still.")
+    print("Directions: Put the device in its launch orientation and hold it still.")
     print("Calibration begins in 10 seconds.")
     time.sleep(10)
     print(f"Calibration beginning now, it will take {duration} seconds...")
@@ -319,7 +323,7 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
 def _configure_pins(config: dict) -> None:
     config["pins"] = {}
     config["orient"] = {}
-    if(len((machine.I2C(scl=9, sda=8)).scan()) > 0):
+    if len((machine.I2C(scl=9, sda=8)).scan()) > 0:
         # FeatherS3D config
         config["pins"]["i2c_scl"] = 9
         config["pins"]["i2c_sda"] = 8
@@ -340,9 +344,9 @@ def _configure_pins(config: dict) -> None:
         config["system"]["gps_pmtk_cmds"] = True
         config["system"]["have_neopixel"] = True
         config["system"]["have_batt_mon"] = True
-        config["orient"]["transpose"] = (2,1,0)
-        config["orient"]["invert"] = (False,False,False)
-    elif(len((machine.I2C(scl=6, sda=5)).scan()) > 0):
+        config["orient"]["transpose"] = (2, 1, 0)
+        config["orient"]["invert"] = (False, False, False)
+    elif len((machine.I2C(scl=6, sda=5)).scan()) > 0:
         # Xiao ESP32S3 Plus config
         config["pins"]["i2c_scl"] = 6
         config["pins"]["i2c_sda"] = 5
@@ -356,58 +360,63 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["lora_cs"] = 41
         config["pins"]["lora_dio1"] = 39
         config["pins"]["lora_rst"] = 42
-        config["pins"]["lora_busy"] = 40 
+        config["pins"]["lora_busy"] = 40
         config["pins"]["button"] = 21
         config["pins"]["led1"] = 48
         config["pins"]["led2"] = 21
         config["system"]["gps_pmtk_cmds"] = False
         config["system"]["have_neopixel"] = False
         config["system"]["have_batt_mon"] = False
-        config["orient"]["transpose"] = (2,0,1)
-        config["orient"]["invert"] = (False,False,True)
+        config["orient"]["transpose"] = (2, 0, 1)
+        config["orient"]["invert"] = (False, False, True)
     else:
         print("FATAL ERROR: No Devices found on the I2C bus.")
 
-def _part_2(config: dict) -> None:
+
+def _sensor_calibration(config: dict) -> None:
     print("")
     print("Part 2: Device Calibration")
     print("--------------------------")
+    print(f"\t1. Return to main menu")
     _configure_pins(config)
     i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
-    print(f"There are {len(connected_devices)} devices connected:")
+    i = 2
+    menu_to_id = {}
     for dev in connected_devices:
+        if dev == 54 or dev == 71:
+            continue
         info = idToDeviceInfo[str(dev)]
-        print(f"\t* {info[1]} ({info[0]})")
+        menu_to_id[i] = dev
+        print(f"\t{i}. {info[1]} ({info[0]})")
+        i += 1
 
-    if 48 in connected_devices:
+    val_ok = False
+    while not val_ok:
+        try:
+            inp = int(input(f"Input selection: "))
+            val_ok = True
+        except ValueError as verr:
+            print("Bad input (can't convert to int)")
+
+    if inp == 1:
+        return
+    elif menu_to_id[inp] == 48:
         print("")
         _mmc5983_offsets(config, i2c)
-    else:
-        print(
-            "FATAL ERROR: No magnetometer connected. Please connect a supported magnetometer (i.e. MMC5983) and re-run this script."
-        )
-
-    if 104 in connected_devices:
+    elif menu_to_id[inp] == 104:
         print("")
         _icm20649_offsets(config, i2c)
-
-    if 107 in connected_devices:
+    elif menu_to_id[inp] == 107:
         print("")
         _ism330DHCX_offsets(config, i2c)
-
-    if 104 not in connected_devices and 107 not in connected_devices:
-        print(
-            "FATAL ERROR: No gyroscope connected. Please connect a supported gyroscope (i.e. ICM20649 or ISM330DHCX) and re-run this script."
-        )
-
-    if 83 in connected_devices:
+    elif menu_to_id[inp] == 83:
+        print("")
         _adxl375_offsets(config, i2c)
 
 
 def _print_config() -> None:
-    with open("/config.json", "r") as f:
-        print(json.loads(f.read()))
+    print(json.dumps(config))
 
 
 def _test_AHRS() -> None:
@@ -420,7 +429,7 @@ def _test_AHRS() -> None:
     from orientate import orientate
     from fusion import Fusion
 
-    default = 30
+    default = 60
     duration = input(f"How long (in seconds) should the test run? [{default}]: ")
     if duration == "":
         duration = default
@@ -460,7 +469,13 @@ def _test_AHRS() -> None:
     mag = MMC5983MA(i2c)
     alti.initialize()
     mag.initialize(config["MMC5983MA"])
-    estimator = StateEstimator(23, alti.error, accel.error, config["orient"]["transpose"], config["orient"]["invert"])
+    estimator = StateEstimator(
+        23,
+        alti.error,
+        accel.error,
+        config["orient"]["transpose"],
+        config["orient"]["invert"],
+    )
     start_ts = time.ticks_ms()
     i = 0
     while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
@@ -484,7 +499,7 @@ def _test_AHRS() -> None:
         all_end = time.ticks_us()
         if i % 10 == 0:
             print(
-                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}\tTimes: Tilt {time.ticks_diff(tilt_end, tilt_start)}μs, Others {time.ticks_diff(all_end, tilt_end)}μs"
+                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}"
             )
         time.sleep_ms(23)
 
@@ -499,7 +514,7 @@ def _send_lora_msg() -> None:
     mosi = config["pins"]["spi_mosi"]
     miso = config["pins"]["spi_miso"]
     cs = config["pins"]["lora_cs"]
-    irq = config["pins"]["lora_dio1"] 
+    irq = config["pins"]["lora_dio1"]
     rst = config["pins"]["lora_rst"]
     gpio = config["pins"]["lora_busy"]
     radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
@@ -573,8 +588,8 @@ def _test_beeper() -> None:
         duration = default
     else:
         duration = int(duration)
-    p1 = PWM(Pin(config["pins"]["buzzer1"] ), freq=5200, duty_u16=32768)
-    p2 = PWM(Pin(config["pins"]["buzzer2"] ), freq=5200, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(config["pins"]["buzzer1"]), freq=5200, duty_u16=32768)
+    p2 = PWM(Pin(config["pins"]["buzzer2"]), freq=5200, duty_u16=32768, invert=True)
     while duration > 0:
         if p1.freq() == 5198:
             p1.freq(1800)
@@ -591,7 +606,11 @@ def _test_beeper() -> None:
 def _print_gps() -> None:
     from gps import GPS
 
-    gps = GPS(config["pins"]["uart_tx"], config["pins"]["uart_rx"], config["system"]["gps_pmtk_cmds"])
+    gps = GPS(
+        config["pins"]["uart_tx"],
+        config["pins"]["uart_rx"],
+        config["system"]["gps_pmtk_cmds"],
+    )
     gps.initialize()
 
     default = 5
@@ -627,49 +646,53 @@ def _print_gps() -> None:
     )
 
 
-def _part_3(config: dict) -> None:
-    print("")
-    print("Part 3: Configuration Tests")
-    print("---------------------------")
-    inp = 0
-    while True:
-        print("Options:")
-        print("\t1. Display Config File")
-        print("\t2. Attitude and Heading Reference System Test")
-        print("\t3. Send Message via LoRa")
-        print("\t4. Turn on WiFi and FTP Server")
-        print("\t5. Test Beeper")
-        print("\t6. Print GPS Coordinates")
-        print("\t9. Exit")
-        inp = int(input(f"Input selection: "))
-        if inp == 1:
-            _print_config()
-        elif inp == 2:
-            _test_AHRS()
-        elif inp == 3:
-            _send_lora_msg()
-        elif inp == 4:
-            _test_wifi_ftp()
-        elif inp == 5:
-            _test_beeper()
-        elif inp == 6:
-            _print_gps()
-        elif inp == 9:
-            break
+def _write_config() -> None:
+    with open("/config.json", "w") as f:
+        json.dump(config, f)
+    print("Configuration saved.")
 
 
 print("")
 print("Nene Configuration Generator")
 print("============================")
 config = _load_existing_config()
-
-_part_1(config)
-_part_2(config)
 _configure_pins(config)
 
-with open("/config.json", "w") as f:
-    json.dump(config, f)
 print("")
-print("Configuration saved.")
-
-_part_3(config)
+while True:
+    print("Options:")
+    print("\t1. Update Basic Configuartion")
+    print("\t2. Update Sensor Calibration")
+    print("\t3. Display Configuration")
+    print("\t4. Attitude and Heading Reference System Test")
+    print("\t5. Send Message via LoRa")
+    print("\t6. Turn on WiFi and FTP Server")
+    print("\t7. Test Beeper")
+    print("\t8. Print GPS Coordinates")
+    print("\t9. Save Configuration / Calibration Data and Exit")
+    val_ok = False
+    while not val_ok:
+        try:
+            inp = int(input(f"Input selection: "))
+            val_ok = True
+        except ValueError as verr:
+            print("Bad input (can't convert to int)")
+    if inp == 1:
+        _basic_config(config)
+    elif inp == 2:
+        _sensor_calibration(config)
+    elif inp == 3:
+        _print_config()
+    elif inp == 4:
+        _test_AHRS()
+    elif inp == 5:
+        _send_lora_msg()
+    elif inp == 6:
+        _test_wifi_ftp()
+    elif inp == 76:
+        _test_beeper()
+    elif inp == 8:
+        _print_gps()
+    elif inp == 9:
+        _write_config()
+        break
