@@ -112,7 +112,7 @@ class StateEstimator:
             # The fusion module seems to want the Z axis to spin the other way
             orientate(
                 self.transpose,
-                tuple((x or y) for x, y in zip(self.invert, (True, True, False))),
+                (self.invert[0], self.invert[1], not self.invert[2]),
                 self.gyroscope,
             )[0],
             orientate(self.transpose, self.invert, self.magnetometer)[0],
