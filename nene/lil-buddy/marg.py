@@ -43,9 +43,6 @@ class StateEstimator:
         :param tuple(bool, bool, bool) invert: Inversion of axes, see orientate.py for details
         """
         self.KF = KalmanFilter(period / 1000, accel_err, alti_err)
-        # self.transpose = (1, 2, 0)  # Y -> Z, Z -> X, X -> Y
-        # self.transpose = (0, 1, 2)  # No changes
-        # self.invert = (True, False, False)  # Invert X (I think?)
         self.acceleration = [0.0, 0.0, 0.0]
         self.gyroscope = [0.0, 0.0, 0.0]
         self.magnetometer = [0.0, 0.0, 0.0]
@@ -55,6 +52,8 @@ class StateEstimator:
             self.invZ = -1
         else:
             self.invZ = 1
+        # The fusion module seems to want the Z axis to spin the other way
+        self.gyro_invert = (invert[0], invert[1], not invert[2])
         self.fuse = Fusion()
 
     @property
@@ -109,12 +108,7 @@ class StateEstimator:
         self.KF.update(value)
         self.fuse.update(
             orientate(self.transpose, self.invert, self.acceleration)[0],
-            # The fusion module seems to want the Z axis to spin the other way
-            orientate(
-                self.transpose,
-                (self.invert[0], self.invert[1], not self.invert[2]),
-                self.gyroscope,
-            )[0],
+            orientate(self.transpose, self.gyro_invert, self.gyroscope)[0],
             orientate(self.transpose, self.invert, self.magnetometer)[0],
         )
 
