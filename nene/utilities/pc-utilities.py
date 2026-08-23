@@ -112,16 +112,16 @@ def get_rod_velocity(data: list, init_alti: float) -> float:
 
 
 def get_ejec_idx(data: list) -> int:
-    # Find the biggest positive change in x acceleration over the recent average
+    # Find the biggest positive change in z acceleration over the recent average
     # We're looking for sudden spikes in the direction the nose cone points
     diffs = []
     for i in range(len(data)):
         if i <= 6:
             continue
-        avg_x_accs = statistics.mean(
-            float(row["acc_x (m/s^2)"]) for row in data[i - 5 : i]
+        avg_z_accs = statistics.mean(
+            float(row["acc_z (m/s^2)"]) for row in data[i - 5 : i]
         )
-        diffs.append(float(data[i]["acc_x (m/s^2)"]) - avg_x_accs)
+        diffs.append(float(data[i]["acc_z (m/s^2)"]) - avg_z_accs)
     # Now get the index where this spike occurs
     return diffs.index(max(diffs)) + 7
 
@@ -151,11 +151,11 @@ def get_stage_idxs(data: list) -> list[int]:
         if i < 1:
             continue
         if not accelerating:
-            if float(data[i]["acc_x (m/s^2)"]) > 2 * G_2_MSS:
+            if float(data[i]["acc_z (m/s^2)"]) > 2 * G_2_MSS:
                 start = i
                 accelerating = True
         else:
-            if float(data[i]["acc_x (m/s^2)"]) < 0.5 * G_2_MSS:
+            if float(data[i]["acc_z (m/s^2)"]) < 0.5 * G_2_MSS:
                 end = i
                 # Disregard spikes of less than half a second
                 if (
@@ -171,7 +171,11 @@ def generate_table(data: list) -> str:
 
     system_name = data[0]["SystemName"]
     launch_date = data[0]["LaunchTime"].strftime("%A, %B %d, %Y")
-    launch_time = data[0]["LaunchTime"].strftime("%I:%M:%S %p")
+    launch_time = ( # Convert launch time (UTC) to the correct timezone
+        data[0]["LaunchTime"]
+        .astimezone(data[0]["LaunchTime"].astimezone().tzinfo)
+        .strftime("%I:%M:%S %p")
+    )
 
     # Get starting altitude by averaging some initial readings
     init_alti = statistics.mean(float(row["est_alt (m)"]) for row in data[1:6])
@@ -187,7 +191,7 @@ def generate_table(data: list) -> str:
 
     altitude_m = max(float(row["est_alt (m)"]) for row in data[1:]) - init_alti
     velocity_ms = max(float(row["est_speed(m/s)"]) for row in data[1:])
-    accel_mss = max(float(row["acc_x (m/s^2)"]) for row in data[1 : ejec_idx - 1])
+    accel_mss = max(float(row["acc_z (m/s^2)"]) for row in data[1 : ejec_idx - 1])
 
     # Print these now cuz it sucks waiting on the whole file to process
     print(
@@ -490,7 +494,7 @@ def generate_motion_plot(data: list) -> str:
     range_end = get_ejec_idx(data)
     ydata = []
     ydata.append([float(row["est_alt (m)"]) for row in data[1:range_end]])
-    ydata.append([float(row["acc_x (m/s^2)"]) for row in data[1:range_end]])
+    ydata.append([float(row["acc_z (m/s^2)"]) for row in data[1:range_end]])
     ydata.append([float(row["est_speed(m/s)"]) for row in data[1:range_end]])
     ylabels = ["Altitude (m)", "Vertical Acceleration (m/s)", "Estimated Speed (m/s/s)"]
     return generate_plot(data, ydata, ylabels, "Meters")
