@@ -169,3 +169,18 @@ nene/typings/
 nene/lil-buddy/py-modules/
 
 **/.DS_Store
+nene/lil-buddy/c-modules/fusion_wrapper/FusionRemap.h
+nene/lil-buddy/c-modules/fusion_wrapper/Fusion.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionAhrs.c
+nene/lil-buddy/c-modules/fusion_wrapper/FusionAhrs.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionBias.c
+nene/lil-buddy/c-modules/fusion_wrapper/FusionBias.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionCompass.c
+nene/lil-buddy/c-modules/fusion_wrapper/FusionCompass.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionConfig.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionConvention.c
+nene/lil-buddy/c-modules/fusion_wrapper/FusionConvention.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionInline.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionMath.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionModel.h
+nene/lil-buddy/c-modules/fusion_wrapper/FusionRemap.c
