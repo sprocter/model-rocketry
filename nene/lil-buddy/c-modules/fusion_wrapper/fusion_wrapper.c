@@ -20,6 +20,8 @@ You should have received a copy of the GNU General Public License along with thi
 #include "Fusion.h"
 
 static FusionAhrs fusion;
+static FusionRemapAlignment remap;
+static FusionRemapAlignment gyro_remap;
 
 // Update the AHRS with a new reading, return Euler angles
 static mp_obj_t update(
@@ -33,6 +35,7 @@ static mp_obj_t update(
     gyroscope.axis.x = mp_obj_get_float(gyro[0]);
     gyroscope.axis.y = mp_obj_get_float(gyro[1]);
     gyroscope.axis.z = mp_obj_get_float(gyro[2]);
+    FusionVector gyro_remapped = FusionRemap(gyroscope, gyro_remap);
 
     mp_obj_t *acc = NULL;
     size_t acc_len = 0;
@@ -41,6 +44,7 @@ static mp_obj_t update(
     accelerometer.axis.x = mp_obj_get_float(acc[0]);
     accelerometer.axis.y = mp_obj_get_float(acc[1]);
     accelerometer.axis.z = mp_obj_get_float(acc[2]);
+    FusionVector acc_remapped = FusionRemap(accelerometer, remap);
 
     mp_obj_t *mag = NULL;
     size_t mag_len = 0;
@@ -49,31 +53,69 @@ static mp_obj_t update(
     magnetometer.axis.x = mp_obj_get_float(mag[0]);
     magnetometer.axis.y = mp_obj_get_float(mag[1]);
     magnetometer.axis.z = mp_obj_get_float(mag[2]);
+    FusionVector mag_remapped = FusionRemap(magnetometer, remap);
 
-    FusionAhrsUpdate(&fusion, gyroscope, accelerometer, magnetometer);
+    FusionAhrsUpdate(&fusion, gyro_remapped, acc_remapped, mag_remapped);
     FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&fusion));
 
+    float raw_roll = euler.angle.roll;
+    float raw_pitch = euler.angle.pitch;
+    float raw_yaw = euler.angle.yaw;
+
+    float roll = 0.0f;
+    float pitch = 0.0f;
+    float heading = 0.0f;
+
+    if(raw_yaw < -9.283){
+        roll = 360 + raw_yaw + 9.283;
+    } else {
+        roll = raw_yaw + 9.283;
+    }
+
+    pitch = raw_pitch;
+    heading = -1 * raw_roll;
+
+    FusionAhrsInternalStates states = FusionAhrsGetInternalStates(&fusion);
+    FusionAhrsFlags flags = FusionAhrsGetFlags(&fusion);
+
     mp_obj_t euler_list[] = {
-        mp_obj_new_float(euler.angle.roll),
-        mp_obj_new_float(euler.angle.pitch),
-        mp_obj_new_float(euler.angle.yaw),
+        mp_obj_new_float(roll),
+        mp_obj_new_float(pitch),
+        mp_obj_new_float(heading),
+        mp_obj_new_float(states.accelerationError),
+        mp_obj_new_bool(states.accelerometerIgnored),
+        mp_obj_new_float(states.accelerationRecoveryTrigger),
+        mp_obj_new_float(states.magneticError),
+        mp_obj_new_bool(states.magnetometerIgnored),
+        mp_obj_new_float(states.magneticRecoveryTrigger),
+        mp_obj_new_bool(flags.startup),
+        mp_obj_new_bool(flags.overrangeRecovery),
+        mp_obj_new_bool(flags.accelerationRecovery),
+        mp_obj_new_bool(flags.magneticRecovery),
     };
 
-    return mp_obj_new_list(3, euler_list);
+    return mp_obj_new_list(13, euler_list);
 }
 
 // Initialize the AHRS Fusion Algorithm
-static mp_obj_t init_ahrs() {
+static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
+    mp_float_t sample_rate = mp_obj_get_float(args[0]);
+    mp_float_t tgt_gain = mp_obj_get_float(args[1]);
+    mp_float_t gyro_range = mp_obj_get_float(args[2]);
+    mp_float_t acc_rej = mp_obj_get_float(args[3]);
+    mp_float_t mag_rej = mp_obj_get_float(args[4]);
+    mp_float_t rej_timeout = mp_obj_get_float(args[5]);
+    
     FusionAhrsInitialise(&fusion);
 
     const FusionAhrsSettings settings = {
-        .sampleRate = 45, // TODO: Hardcoded
+        .sampleRate = sample_rate, // 45
         .convention = FusionConventionNwu,
-        .gain = 0.5f, // TODO: Hardcoded
-        .gyroscopeRange = 500.0f, // TODO: Hardcoded
-        .accelerationRejection = 10.0f, // TODO: Hardcoded
-        .magneticRejection = 10.0f, // TODO: Hardcoded
-        .rejectionTimeout = 5.0f, // TODO: Hardcoded
+        .gain = tgt_gain, // 0.5
+        .gyroscopeRange = gyro_range, // 500
+        .accelerationRejection = acc_rej, // 10
+        .magneticRejection = mag_rej, // 10
+        .rejectionTimeout = rej_timeout, // 5
     };
 
     FusionAhrsSetSettings(&fusion, &settings);
@@ -82,19 +124,22 @@ static mp_obj_t init_ahrs() {
     FusionBiasInitialise(&bias);
 
     FusionBiasSettings biasSettings = fusionBiasDefaultSettings;
-    biasSettings.sampleRate = 45; // TODO: Hardcoded
+    biasSettings.sampleRate = sample_rate;
 
     FusionBiasSetSettings(&bias, &biasSettings);
+
+    remap = FusionRemapAlignmentPZPYPX; // TODO: Hardcoded
+    gyro_remap = FusionRemapAlignmentPZPYNX; // TODO: Hardcoded
 
     return mp_const_none;
 }
 
-static MP_DEFINE_CONST_FUN_OBJ_0(init_obj, init_ahrs);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(init_ahrs_obj, 6, 6, init_ahrs);
 static MP_DEFINE_CONST_FUN_OBJ_3(update_obj, update);
 
 static const mp_rom_map_elem_t fusion_wrapper_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_fusion_wrapper) },
-    { MP_ROM_QSTR(MP_QSTR_init_ahrs), MP_ROM_PTR(&init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_init_ahrs), MP_ROM_PTR(&init_ahrs_obj) },
     { MP_ROM_QSTR(MP_QSTR_update), MP_ROM_PTR(&update_obj) },
 };
 static MP_DEFINE_CONST_DICT(fusion_wrapper_globals, fusion_wrapper_globals_table);
