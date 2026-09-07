@@ -42,6 +42,7 @@ static mp_obj_t update(
     size_t acc_len = 0;
     mp_obj_get_array(acc_obj, &acc_len, &acc);
     FusionVector accelerometer;
+    // The library wants gravity in g, we track in m/s, so we convert here
     accelerometer.axis.x = mp_obj_get_float(acc[0]) * 0.101971621298;
     accelerometer.axis.y = mp_obj_get_float(acc[1]) * 0.101971621298;
     accelerometer.axis.z = mp_obj_get_float(acc[2]) * 0.101971621298;
@@ -57,22 +58,6 @@ static mp_obj_t update(
     FusionVector mag_remapped = FusionRemap(magnetometer, remap);
 
     FusionAhrsUpdate(&fusion, gyro_remapped, acc_remapped, mag_remapped);
-
-    // FusionAhrsInternalStates states = FusionAhrsGetInternalStates(&fusion);
-    // FusionAhrsFlags flags = FusionAhrsGetFlags(&fusion);
-
-    // mp_obj_t euler_list[] = {
-    //     mp_obj_new_float(states.accelerationError),
-    //     mp_obj_new_bool(states.accelerometerIgnored),
-    //     mp_obj_new_float(states.accelerationRecoveryTrigger),
-    //     mp_obj_new_float(states.magneticError),
-    //     mp_obj_new_bool(states.magnetometerIgnored),
-    //     mp_obj_new_float(states.magneticRecoveryTrigger),
-    //     mp_obj_new_bool(flags.startup),
-    //     mp_obj_new_bool(flags.overrangeRecovery),
-    //     mp_obj_new_bool(flags.accelerationRecovery),
-    //     mp_obj_new_bool(flags.magneticRecovery),
-    // };
 
     return mp_const_none;
 }
@@ -97,22 +82,19 @@ static mp_obj_t get_euler() {
     pitch = -1 * raw_pitch;
     heading = raw_roll;
 
-    mp_obj_t euler_list[] = {
+    float pitch_rad = pitch * (M_PI / 180.0);
+    float heading_rad = heading * (M_PI / 180.0);
+    float tilt_rad = acos(cos(heading_rad) * cos(pitch_rad));
+    float tilt = (180.0 / M_PI) * tilt_rad;
+
+    mp_obj_t ret_list[] = {
         mp_obj_new_float(roll),
         mp_obj_new_float(pitch),
         mp_obj_new_float(heading),
+        mp_obj_new_float(tilt),
     };
 
-    return mp_obj_new_list(3, euler_list);
-}
-
-static mp_obj_t get_tilt() {
-    FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&fusion)); //TODO: Cache this?
-    float pitch_rad = -1 * euler.angle.pitch * (M_PI / 180.0);
-    float heading_rad = euler.angle.roll * (M_PI / 180.0);
-    float tilt_rad = acos(cos(heading_rad) * cos(pitch_rad));
-    float tilt = (180.0 / M_PI) * tilt_rad;
-    return mp_obj_new_float(tilt);
+    return mp_obj_new_list(4, ret_list);
 }
 
 static mp_obj_t get_lin_acc() {
@@ -125,6 +107,30 @@ static mp_obj_t get_lin_acc() {
     return mp_obj_new_list(3, lin_acc_list);
 }
 
+static mp_obj_t get_states() {
+    FusionAhrsInternalStates states = FusionAhrsGetInternalStates(&fusion);
+    mp_obj_t state_list[] = {
+        mp_obj_new_float(states.accelerationError),
+        mp_obj_new_bool(states.accelerometerIgnored),
+        mp_obj_new_float(states.accelerationRecoveryTrigger),
+        mp_obj_new_float(states.magneticError),
+        mp_obj_new_bool(states.magnetometerIgnored),
+        mp_obj_new_float(states.magneticRecoveryTrigger),
+    };
+    return mp_obj_new_list(6, state_list);
+}
+
+static mp_obj_t get_flags() {
+    FusionAhrsFlags flags = FusionAhrsGetFlags(&fusion);
+    mp_obj_t flag_list[] = {
+        mp_obj_new_bool(flags.startup),
+        mp_obj_new_bool(flags.overrangeRecovery),
+        mp_obj_new_bool(flags.accelerationRecovery),
+        mp_obj_new_bool(flags.magneticRecovery),
+    };
+    return mp_obj_new_list(4, flag_list);
+}
+
 // Initialize the AHRS Fusion Algorithm
 static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
     mp_float_t sample_rate = mp_obj_get_float(args[0]);
@@ -134,6 +140,7 @@ static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
     mp_float_t mag_rej = mp_obj_get_float(args[4]);
     mp_float_t rej_timeout = mp_obj_get_float(args[5]);
     mp_float_t decl = mp_obj_get_float(args[6]);
+    mp_int_t alignment = mp_obj_get_int(args[7]);
     
     FusionAhrsInitialise(&fusion);
 
@@ -157,15 +164,24 @@ static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
 
     FusionBiasSetSettings(&bias, &biasSettings);
 
-    remap = FusionRemapAlignmentPZPYNX;
+    if(alignment == 0){
+        remap = FusionRemapAlignmentPXPYNZ;
+    } else if(alignment == 1) {
+        remap = FusionRemapAlignmentPZPYNX;
+    } else if(alignment == 2) {
+        remap = FusionRemapAlignmentPXPYPZ; // TODO: Xiao alignment, TBD
+    } else {
+        remap = FusionRemapAlignmentPXPYPZ; // TODO: Set better default?
+    }
     declination = decl;
 
     return mp_const_none;
 }
 
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(init_ahrs_obj, 7, 7, init_ahrs);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(init_ahrs_obj, 8, 8, init_ahrs);
 static MP_DEFINE_CONST_FUN_OBJ_0(get_euler_obj, get_euler);
-static MP_DEFINE_CONST_FUN_OBJ_0(get_tilt_obj, get_tilt);
+static MP_DEFINE_CONST_FUN_OBJ_0(get_states_obj, get_states);
+static MP_DEFINE_CONST_FUN_OBJ_0(get_flags_obj, get_flags);
 static MP_DEFINE_CONST_FUN_OBJ_0(get_lin_acc_obj, get_lin_acc);
 static MP_DEFINE_CONST_FUN_OBJ_3(update_obj, update);
 
@@ -173,7 +189,8 @@ static const mp_rom_map_elem_t fusion_wrapper_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_fusion_wrapper) },
     { MP_ROM_QSTR(MP_QSTR_init_ahrs), MP_ROM_PTR(&init_ahrs_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_euler), MP_ROM_PTR(&get_euler_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_tilt), MP_ROM_PTR(&get_tilt_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_states), MP_ROM_PTR(&get_states_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_flags), MP_ROM_PTR(&get_flags_obj) },
     { MP_ROM_QSTR(MP_QSTR_get_lin_acc), MP_ROM_PTR(&get_lin_acc_obj) },
     { MP_ROM_QSTR(MP_QSTR_update), MP_ROM_PTR(&update_obj) },
 };
