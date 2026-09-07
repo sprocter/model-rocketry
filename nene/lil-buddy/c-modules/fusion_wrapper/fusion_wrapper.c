@@ -21,6 +21,7 @@ You should have received a copy of the GNU General Public License along with thi
 #include <math.h>
 
 static FusionAhrs fusion;
+static FusionBias bias;
 static FusionRemapAlignment remap;
 static float declination;
 
@@ -57,7 +58,10 @@ static mp_obj_t update(
     magnetometer.axis.z = mp_obj_get_float(mag[2]);
     FusionVector mag_remapped = FusionRemap(magnetometer, remap);
 
-    FusionAhrsUpdate(&fusion, gyro_remapped, acc_remapped, mag_remapped);
+    // Update bias algorithm
+    FusionVector gyro_biased = FusionBiasUpdate(&bias, gyro_remapped);
+
+    FusionAhrsUpdate(&fusion, gyro_biased, acc_remapped, mag_remapped);
 
     return mp_const_none;
 }
@@ -156,7 +160,6 @@ static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
 
     FusionAhrsSetSettings(&fusion, &settings);
 
-    FusionBias bias;
     FusionBiasInitialise(&bias);
 
     FusionBiasSettings biasSettings = fusionBiasDefaultSettings;
