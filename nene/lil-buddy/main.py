@@ -30,6 +30,7 @@ from marg import StateEstimator
 
 import time, gc, json, vfs, machine, network, uftpd, os, deflate, esp32
 import hidden_buffer as buff
+import fusion_wrapper as ahrs
 
 
 _MODE_INITIALIZE = const(0)
@@ -211,9 +212,8 @@ def process_reading(
     barometric_altitude = raw_altitude - initial_altitude
 
     mag_rdg = mag.decode_mag(mag_buffer)
-    estimator.magnetometer = mag_rdg
 
-    acc_rdg = accel.decode_accel(acc_buffer)
+    lores_acc_rdg = accel.decode_accel(acc_buffer)
     hires_acc_rdg = _EMPTY_READING
     if has_hires_accel:
         hires_acc_rdg = hires_accel.decode_accel(hires_acc_buffer)
@@ -222,18 +222,17 @@ def process_reading(
             and (abs(hires_acc_rdg[sens_idx[1]]) < _MAX_HIRES_ACCEL)
             and (abs(hires_acc_rdg[sens_idx[2]]) < _MAX_HIRES_ACCEL)
         ):
-            estimator.acceleration = hires_acc_rdg
+            acc_rdg = hires_acc_rdg
         else:
-            estimator.acceleration = acc_rdg
+            acc_rdg = lores_acc_rdg
     else:
-        estimator.acceleration = acc_rdg
+        acc_rdg = lores_acc_rdg
 
     gyro_rdg = gyro.decode_gyro(gyro_buffer)
-    estimator.gyroscope = gyro_rdg
+    ahrs.update(gyro_rdg, acc_rdg, mag_rdg)
+    [roll, pitch, yaw, tilt] = ahrs.get_euler()
 
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
-
-    estimated_altitude = estimator.altitude  # Use the estimated altitude
 
     if mode == _MODE_ASCENT and barometric_altitude > apogee:
         apogee = barometric_altitude
@@ -250,9 +249,9 @@ def process_reading(
         packed_reading = pack(
             _PACK_FORMAT,
             float(timestamp),
-            sens_inv[0] * acc_rdg[sens_idx[0]],  # X
-            sens_inv[1] * acc_rdg[sens_idx[1]],  # Y
-            sens_inv[2] * acc_rdg[sens_idx[2]],  # Z
+            sens_inv[0] * lores_acc_rdg[sens_idx[0]],  # X
+            sens_inv[1] * lores_acc_rdg[sens_idx[1]],  # Y
+            sens_inv[2] * lores_acc_rdg[sens_idx[2]],  # Z
             sens_inv[0] * hires_acc_rdg[sens_idx[0]],  # X
             sens_inv[1] * hires_acc_rdg[sens_idx[1]],  # Y
             sens_inv[2] * hires_acc_rdg[sens_idx[2]],  # Z
@@ -267,11 +266,11 @@ def process_reading(
             ambient_temp,
             float(gps.lat),
             float(gps.lon),
-            estimator.tilt,
-            estimator.heading,
-            estimator.pitch,
-            estimator.roll,
-            estimated_altitude,
+            tilt,
+            yaw,
+            pitch,
+            roll,
+            estimator.altitude,
             estimator.velocity,
             prev_frame_time,
         )
@@ -279,9 +278,9 @@ def process_reading(
     elif mode == _MODE_ASCENT or mode == _MODE_DESCENT or mode == _MODE_TOUCHDOWN:
         idx_start = reading_num * _FLOATS_PER_FRAME
         buff.store(idx_start + 0, float(timestamp))
-        buff.store(idx_start + 1, sens_inv[0] * acc_rdg[sens_idx[0]])  # X
-        buff.store(idx_start + 2, sens_inv[1] * acc_rdg[sens_idx[1]])  # Y
-        buff.store(idx_start + 3, sens_inv[2] * acc_rdg[sens_idx[2]])  # Z
+        buff.store(idx_start + 1, sens_inv[0] * lores_acc_rdg[sens_idx[0]])  # X
+        buff.store(idx_start + 2, sens_inv[1] * lores_acc_rdg[sens_idx[1]])  # Y
+        buff.store(idx_start + 3, sens_inv[2] * lores_acc_rdg[sens_idx[2]])  # Z
         buff.store(idx_start + 4, sens_inv[0] * hires_acc_rdg[sens_idx[0]])  # X
         buff.store(idx_start + 5, sens_inv[1] * hires_acc_rdg[sens_idx[1]])  # Y
         buff.store(idx_start + 6, sens_inv[2] * hires_acc_rdg[sens_idx[2]])  # Z
@@ -300,11 +299,11 @@ def process_reading(
         buff.store(idx_start + 16, float(gps.lat))
         buff.store(idx_start + 17, float(gps.lon))
 
-        buff.store(idx_start + 18, estimator.tilt)
-        buff.store(idx_start + 19, estimator.heading)
-        buff.store(idx_start + 20, estimator.pitch)
-        buff.store(idx_start + 21, estimator.roll)
-        buff.store(idx_start + 22, estimated_altitude)
+        buff.store(idx_start + 18, tilt)
+        buff.store(idx_start + 19, yaw)
+        buff.store(idx_start + 20, pitch)
+        buff.store(idx_start + 21, roll)
+        buff.store(idx_start + 22, estimator.altitude)
         buff.store(idx_start + 23, estimator.velocity)
 
         buff.store(idx_start + 24, prev_frame_time)
@@ -625,6 +624,30 @@ def initialize():
         accel.error,
         config["orient"]["transpose"],
         config["orient"]["invert"],
+    )
+
+    # Initialization parameters for the AHRS / "Fusion" module
+    gain = 0.4
+    gyro_range = 500.0
+    accelerometer_reject = 10.0
+    magnetometer_reject = 10.0
+    rejection_timeout = 10.0  # Go higher? Like 15?
+    declination = -9.38333  # Declination in degrees for PSC Launch site
+    if config["orient"]["transpose"] == [2, 1, 0]:
+        alignment = 1
+    elif config["orient"]["transpose"] == [2, 0, 1]:
+        alignment = 2
+    else:
+        raise LookupError(f"Unsupported sensor orientation: {config["orient"]["transpose"]}")
+    ahrs.init_ahrs(
+        _SENSOR_FREQ_HZ,
+        gain,
+        gyro_range,
+        accelerometer_reject,
+        magnetometer_reject,
+        rejection_timeout,
+        declination,
+        alignment,
     )
 
     # Adjust for sensor mounting constraints
