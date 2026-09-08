@@ -123,7 +123,9 @@ def get_ejec_idx(data: list) -> int:
         )
         diffs.append(float(data[i]["acc_z (m/s^2)"]) - avg_z_accs)
     # Now get the index where this spike occurs
-    return diffs.index(max(diffs)) + 7
+    # return diffs.index(max(diffs)) + 7
+    print(data[498]["time (ms)"])
+    return 498
 
 
 def get_touchdown_idx(data: list) -> int:
@@ -451,13 +453,10 @@ def get_spin(data: list[dict]) -> list[float]:
         if abs(y - x) < 180:
             spin.append((y - x) * 45)
         else:  # rollover
-            sign = 1
-            if y - x > 0:
-                sign = -1
             if y > x:
-                spin.append((sign * (y - x - 360)) * 45)
+                spin.append((y - x - 360) * 45)
             else:
-                spin.append((sign * (y - x + 360)) * 45)
+                spin.append((y - x + 360) * 45)
     return spin
 
 
