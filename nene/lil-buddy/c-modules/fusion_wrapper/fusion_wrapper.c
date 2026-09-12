@@ -168,11 +168,11 @@ static mp_obj_t init_ahrs(size_t n_args, const mp_obj_t *args) {
     FusionBiasSetSettings(&bias, &biasSettings);
 
     if(alignment == 0){
-        remap = FusionRemapAlignmentPXPYNZ;
+        remap = FusionRemapAlignmentPXPYPZ;
     } else if(alignment == 1) {
-        remap = FusionRemapAlignmentPZPYNX;
+        remap = FusionRemapAlignmentPZPYNX; // FeatherS3D
     } else if(alignment == 2) {
-        remap = FusionRemapAlignmentPXPYPZ; // TODO: Xiao alignment, TBD
+        remap = FusionRemapAlignmentPZPXPY; // Xiao ESP32-S3 Plus
     } else {
         remap = FusionRemapAlignmentPXPYPZ; // TODO: Set better default?
     }
