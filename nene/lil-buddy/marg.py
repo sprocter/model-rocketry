@@ -14,8 +14,6 @@ You should have received a copy of the GNU General Public License along with thi
 """
 
 from ulab import numpy as np
-from fusion import Fusion
-from orientate import orientate
 from math import degrees, radians, acos, cos
 
 
@@ -39,22 +37,18 @@ class StateEstimator:
         :param float period: The time between readings in milliseconds
         :param float alti_err: The standard deviation of altimeter readings in meters
         :param float accel_err: The standard deviation of accelerometer readings in meters per second per second
-        :param tuple(int, int, int) transpose: Transposition of axes, see orientate.py for details
-        :param tuple(bool, bool, bool) invert: Inversion of axes, see orientate.py for details
+        :param tuple(int, int, int) transpose: Transposition of axes
+        :param tuple(bool, bool, bool) invert: Inversion of axes
         """
         self.KF = KalmanFilter(period / 1000, accel_err, alti_err)
         self.acceleration = [0.0, 0.0, 0.0]
         self.gyroscope = [0.0, 0.0, 0.0]
         self.magnetometer = [0.0, 0.0, 0.0]
         self.transpose = transpose
-        self.invert = invert
         if invert[2]:  # Invert Z for speed and altitude filter
             self.invZ = -1
         else:
             self.invZ = 1
-        # The fusion module seems to want the Z axis to spin the other way
-        self.gyro_invert = (invert[0], invert[1], not invert[2])
-        self.fuse = Fusion()
 
     @property
     def altitude(self) -> float:
@@ -65,40 +59,8 @@ class StateEstimator:
         return self.KF.x[1][0]
 
     @property
-    def heading(self) -> float:
-        # Roll for a rocket (which primarily travels vertically) is akin to
-        # heading for a plane (which primarily travels horizontally)
-        return -1 * self.fuse.roll
-
-    @property
-    def pitch(self) -> float:
-        return self.fuse.pitch
-
-    @property
-    def tilt(self) -> float:
-        return degrees(acos(cos(radians(self.heading)) * cos(radians(self.pitch))))
-
-    @property
-    def roll(self) -> float:
-        # heading for a rocket (which primarily travels vertically) is akin to
-        # roll for a plane (which primarily travels horizontally)
-        h = self.fuse.heading + 9.283
-        if h < 0:
-            return 360 + h
-        else:
-            return h
-
-    @property
     def acceleration(self) -> float:
         return self._acceleration  # Just returns the cached sensor reading
-
-    @property
-    def gyroscope(self) -> float:
-        return self._gyro  # Just returns the cached sensor reading
-
-    @property
-    def magnetometer(self) -> float:
-        return self._magnetometer  # Just returns the cached sensor reading
 
     @altitude.setter
     def altitude(self, value) -> None:
@@ -106,23 +68,10 @@ class StateEstimator:
             self.invZ * self.acceleration[self.transpose[2]]
         )  # TODO: Should we use more than the Z value? Adjust for pitch?
         self.KF.update(value)
-        self.fuse.update(
-            orientate(self.transpose, self.invert, self.acceleration)[0],
-            orientate(self.transpose, self.gyro_invert, self.gyroscope)[0],
-            orientate(self.transpose, self.invert, self.magnetometer)[0],
-        )
 
     @acceleration.setter
     def acceleration(self, value) -> None:
         self._acceleration = value
-
-    @gyroscope.setter
-    def gyroscope(self, value) -> None:
-        self._gyro = value
-
-    @magnetometer.setter
-    def magnetometer(self, value) -> None:
-        self._magnetometer = value
 
 
 class KalmanFilter:
