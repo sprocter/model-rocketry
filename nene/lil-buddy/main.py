@@ -377,7 +377,7 @@ def send_message() -> None:
             retries += 1
 
         if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
-            payload = pack(">HHBHHB", 0, 0, 0, 0, 0, 0)
+            payload = pack(">HHBHHB", 0, 0, 48, 0, 0, 48)
         else:
             lat_str = gps.lat
             lat_dir = ord(gps.latNS)

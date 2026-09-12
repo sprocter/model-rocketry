@@ -123,9 +123,7 @@ def get_ejec_idx(data: list) -> int:
         )
         diffs.append(float(data[i]["acc_z (m/s^2)"]) - avg_z_accs)
     # Now get the index where this spike occurs
-    # return diffs.index(max(diffs)) + 7
-    print(data[498]["time (ms)"])
-    return 498
+    return diffs.index(max(diffs)) + 7
 
 
 def get_touchdown_idx(data: list) -> int:
