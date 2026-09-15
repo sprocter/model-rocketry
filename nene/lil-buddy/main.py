@@ -232,6 +232,7 @@ def process_reading(
     ahrs.update(gyro_rdg, acc_rdg, mag_rdg)
     [roll, pitch, yaw, tilt] = ahrs.get_euler()
 
+    estimator.acceleration = acc_rdg
     estimator.altitude = barometric_altitude  # TODO: Shouldn't this be last? Should probably manually trigger computation
 
     if mode == _MODE_ASCENT and barometric_altitude > apogee:
