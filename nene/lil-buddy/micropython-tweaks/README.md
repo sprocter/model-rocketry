@@ -17,7 +17,10 @@ You'll also need to either download a few files or clone a few other repositorie
 
 1. Python modules, copy into `micropython/ports/esp32/modules`
     1. Third-party libraries
-        1. [micropySX126X](https://github.com/ehong-tl/micropySX126X): `_sx126x.py`, `sx126x.py`, and `sx1262.py`
+        1. [LoRa driver](https://github.com/micropython/micropython-lib/tree/master/micropython/lora): `lora/lora/modem.py`, `lora-sx126x/lora/sx126x.py`, `lora-sx127x/lora/sx127x.py` and `lora-sync/lora/sync_modem.py`
+            * We're not using relative imports, so there are four changes to make:
+                * Modify lines 8 and 857 of `sx127x.py`: Remove the '.' in front of 'modem' and 'sync_modem'
+                * Modify lines 11 and 878 of `sx126x.py`: Remove the '.' in front of 'modem' and 'sync_modem'
         2. [FTP-Server-for-ESP8266-ESP32-and-PYBD](https://github.com/robert-hh/FTP-Server-for-ESP8266-ESP32-and-PYBD/tree/master): `uftpd.py`
             * Delete the last line: we don't want the FTP server to auto-start upon import.
     2. All the files in the `model-rocketry/nene/lil-buddy/drivers` directory

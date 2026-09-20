@@ -11,8 +11,9 @@ You should have received a copy of the GNU General Public License along with thi
 --------------------------------------------------------------------------------
 """
 
-from machine import PWM, Pin, I2C, Timer, RTC, Signal
+from machine import PWM, SPI, I2C, RTC, Pin, Timer, Signal
 from struct import pack, unpack
+from binascii import unhexlify
 from neopixel import NeoPixel
 from collections import deque
 from micropython import const
@@ -25,10 +26,10 @@ from ism330dhcx import ISM330DHCX
 from mmc5983ma import MMC5983MA
 from max17048 import MAX17048
 from gps import GPS
-from sx1262 import SX1262
+from sx126x import SX1262
 from marg import StateEstimator
 
-import time, gc, json, vfs, machine, network, uftpd, os, deflate, esp32
+import time, gc, json, vfs, machine, network, uftpd, os, deflate, esp32, random, cryptolib
 import hidden_buffer as buff
 import fusion_wrapper as ahrs
 
@@ -350,49 +351,36 @@ def touched_down() -> bool:
 
 
 def send_message() -> None:
-    global msg_id, msg_header
+    retries = 0  # Avoid hanging if something went wrong with the GPS
 
-    hdr_id = msg_id % 255
-    if _GPS_CONNECTED:
-        hdr_flags = msg_id % 2
+    while retries < 30 and (
+        gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
+    ):
+        gps.clear_buffer()
+        time.sleep_ms(100)
+        gps.read_raw()
+
+        if gps.buffer != None:
+            gps.decode_reading(gps.buffer)
+
+        retries += 1
+
+    if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
+        payload = pack(">fHHBHHB", 0.0, 0, 0, ord('X'), 0, 0, ord('X'))
     else:
-        hdr_flags = 0
-    msg_header[2] = hdr_id
-    msg_header[3] = hdr_flags
+        lat_str = gps.lat
+        lat_dir = ord(gps.latNS)
+        lon_str = gps.lon
+        lon_dir = ord(gps.lonEW)
+        lat_elems = [int(x) for x in lat_str.split(b".")]
+        lon_elems = [int(x) for x in lon_str.split(b".")]
+        payload_elems = [apogee] + lat_elems + [lat_dir] + lon_elems + [lon_dir]
+        payload = pack(">fHHBHHB", *payload_elems)
 
-    if hdr_flags == 0:
-        payload = pack(">d", apogee)
-    elif hdr_flags == 1:
-        retries = 0  # Avoid hanging if something went wrong with the GPS
+    pad = [random.getrandbits(8), random.getrandbits(8)]
+    message = encryptor.encrypt(payload + bytes(pad))
 
-        while retries < 30 and (
-            gps.buffer == None or not hasattr(gps, "valid") or gps.valid == False
-        ):
-            gps.clear_buffer()
-            time.sleep_ms(100)
-            gps.read_raw()
-
-            if gps.buffer != None:
-                gps.decode_reading(gps.buffer)
-
-            retries += 1
-
-        if retries >= 30 or not (hasattr(gps, "valid") and gps.valid):
-            payload = pack(">HHBHHB", 0, 0, 48, 0, 0, 48)
-        else:
-            lat_str = gps.lat
-            lat_dir = ord(gps.latNS)
-            lon_str = gps.lon
-            lon_dir = ord(gps.lonEW)
-            lat_elems = [int(x) for x in lat_str.split(b".")]
-            lon_elems = [int(x) for x in lon_str.split(b".")]
-            payload_elems = lat_elems + [lat_dir] + lon_elems + [lon_dir]
-            payload = pack(">HHBHHB", *payload_elems)
-
-    radio.send(msg_header + payload)
-
-    msg_id += 1
-
+    radio.send(message)
 
 def _update_led() -> None:
     if have_neopixel:
@@ -441,56 +429,68 @@ def _toggle_led(led_on: bool) -> None:
 
 
 def _init_radio(config: dict):
-    global msg_header, msg_id
+    global radio, encryptor
 
     spi_bus = 1
-    clk = config["pins"]["spi_clk"]
-    mosi = config["pins"]["spi_mosi"]
-    miso = config["pins"]["spi_miso"]
-    cs = config["pins"]["lora_cs"]
-    irq = config["pins"]["lora_dio1"]
-    rst = config["pins"]["lora_rst"]
-    gpio = config["pins"]["lora_busy"]
+    baud_rate = 2_000_000
+    polarity = 0
+    phase = 0
+    tcxo_mv = (
+        3300 - 200
+    )  # "TCXO voltage should always be 200 mV less than the VCC to ensure proper operation" -- 1262 datasheet, page 7
+    clk = Pin(int(config["pins"]["spi_clk"]))
+    mosi = Pin(int(config["pins"]["spi_mosi"]))
+    miso = Pin(int(config["pins"]["spi_miso"]))
+    cs = Pin(int(config["pins"]["lora_cs"]))
+    irq = Pin(int(config["pins"]["lora_dio1"]))
+    rst = Pin(int(config["pins"]["lora_rst"]))
+    gpio = Pin(int(config["pins"]["lora_busy"]))
 
-    radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
-
-    frequency = config["lora"]["freq"]
-    bandwidth = 125
-    spreading_factor = 10
+    frequency = int(float(config["lora"]["freq"]) * 1000)
+    bandwidth = 500
+    spreading_factor = 12
     coding_rate = 8
-    sync_word = 0x12  # private
+    preamble_length = 12
     if _RELEASE_LEVEL == _RELENG_RELEASE:
         tx_power = 22
     else:
         tx_power = -5
-    mA_limit = 125.0
-    implicit_header = False
     use_CRC = False
-    use_LDRO = True  # Low Data-Rate Optimizer
-    radio.begin(
-        freq=frequency,
-        bw=bandwidth,
-        sf=spreading_factor,
-        cr=coding_rate,
-        syncWord=sync_word,
-        power=tx_power,
-        currentLimit=mA_limit,
-        implicit=implicit_header,
-        crcOn=use_CRC,
-    )
-    radio.forceLDRO(use_LDRO)
-    msg_id = 1
-    hdr_to = config["lora"]["bigbuddy_addr"]
-    hdr_from = config["lora"]["lilbuddy_addr"]
-    msg_header = bytearray(4)
-    msg_header[0] = hdr_to
-    msg_header[1] = hdr_from
 
-    return radio
+    lora_cfg = {
+        "freq_khz": frequency,
+        "sf": spreading_factor,
+        "bw": bandwidth,  # kHz
+        "coding_rate": coding_rate,
+        "preamble_len": preamble_length,
+        "output_power": tx_power,  # dBm
+        "crc_en": use_CRC,
+    }
+
+    radio = SX1262(
+        spi=SPI(
+            spi_bus,
+            baudrate=baud_rate,
+            polarity=polarity,
+            phase=phase,
+            miso=miso,
+            mosi=mosi,
+            sck=clk,
+        ),
+        cs=cs,
+        busy=gpio,
+        dio1=irq,
+        reset=rst,
+        dio3_tcxo_millivolts=tcxo_mv,
+        lora_cfg=lora_cfg,
+    )
+
+    encryption_key = unhexlify(config["lora"]["key"])
+    encryptor = cryptolib.aes(encryption_key, 1)
 
 
 def _init_devices(config: dict) -> None:
-    global accel, hires_accel, alti, gyro, mag, gps, radio, batt_monitor, clock, _GPS_CONNECTED, has_hires_accel
+    global accel, hires_accel, alti, gyro, mag, gps, batt_monitor, clock, _GPS_CONNECTED, has_hires_accel
     i2c = machine.I2C(scl=config["pins"]["i2c_scl"], sda=config["pins"]["i2c_sda"])
     connected_devices = i2c.scan()
 
@@ -552,7 +552,7 @@ def _init_devices(config: dict) -> None:
     else:
         raise OSError(f"No gyroscope connected!")
 
-    radio = _init_radio(config)
+    _init_radio(config)
 
     # Even though the battery monitor is on the board, it communicates via I2C
     # so we initialize it here, rather than _init_board
@@ -639,7 +639,9 @@ def initialize():
     elif config["orient"]["transpose"] == [2, 0, 1]:
         alignment = 2
     else:
-        raise LookupError(f"Unsupported sensor orientation: {config["orient"]["transpose"]}")
+        raise LookupError(
+            f"Unsupported sensor orientation: {config["orient"]["transpose"]}"
+        )
     ahrs.init_ahrs(
         _SENSOR_FREQ_HZ,
         gain,
