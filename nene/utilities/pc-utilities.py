@@ -493,7 +493,7 @@ def generate_motion_plot(data: list) -> str:
     ydata.append([float(row["est_alt (m)"]) for row in data[1:range_end]])
     ydata.append([float(row["acc_z (m/s^2)"]) for row in data[1:range_end]])
     ydata.append([float(row["est_speed(m/s)"]) for row in data[1:range_end]])
-    ylabels = ["Altitude (m)", "Vertical Acceleration (m/s)", "Estimated Speed (m/s/s)"]
+    ylabels = ["Altitude (m)", "Vertical Acceleration (m/s^2)", "Estimated Speed (m/s)"]
     return generate_plot(data, ydata, ylabels, "Meters")
 
 
