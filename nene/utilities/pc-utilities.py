@@ -15,6 +15,8 @@ import sys
 import csv
 import datetime as dt
 from itertools import pairwise
+from collections import deque
+import numpy as np
 import statistics
 import matplotlib.pyplot as plt
 from matplotlib.ticker import AutoMinorLocator
@@ -100,6 +102,103 @@ def write_kml(data: list) -> None:
         kmlfile.write(kml)
 
 
+def get_event_indexes(data: list) -> dict:
+    betas_alt = deque(maxlen=45)
+    idxs = {}
+    idxs["ignition"] = []
+    idxs["burnout"] = []
+    idxs["ground_hit"] = len(data) - 1
+    ignit_candidate = "UNKNOWN"
+    maybe_ignited = False
+    ignited = False
+    launched = False
+    apogee_reached = False
+    ejected = False
+    ground_hit = False
+    ignit_candidate_idx = 999999999999
+    zs = []
+    for i in range(47, len(data)):
+        if not (ejected and apogee_reached):
+            x = np.array([float(row["time (ms)"]) for row in data[i - 5 : i]])
+            y = np.array([float(row["est_alt (m)"]) for row in data[i - 5 : i]])
+            beta_alt = np.polyfit(x, y, 1)[0]
+        else:
+            xs = np.array(
+                [float(row["h_acc_x (m/s^2)"]) for row in data[i - 15 : i - 10]]
+            )
+            ys = np.array(
+                [float(row["h_acc_y (m/s^2)"]) for row in data[i - 15 : i - 10]]
+            )
+            zs = np.array(
+                [float(row["h_acc_z (m/s^2)"]) for row in data[i - 15 : i - 10]]
+            )
+            alts = np.array([float(row["baro_alt (m)"]) for row in data[i - 10 : i]])
+        if len(betas_alt) == 45:
+            if not launched and np.mean(np.array(betas_alt) < 0.001):
+                if not ignited:
+                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05:
+                        ignit_candidate = i
+                        ignited = True
+                if ignited:
+                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
+                        ignited = False
+                    elif beta_alt > 0.001:
+                        # print(f"Ignition at {data[ignit_candidate]["time (ms)"]}")
+                        idxs["ignition"].append(ignit_candidate)
+                        # print(f"Launch at {data[i]["time (ms)"]}")
+                        idxs["launch"] = i
+                        betas_alt.clear()
+                        launched = True
+            elif launched:
+                y2 = np.array(
+                    [abs(float(row["acc_z (m/s^2)"])) for row in data[i - 5 : i]]
+                )
+                if maybe_ignited:
+                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
+                        maybe_ignited = False
+                    elif i - ignit_candidate_idx >= 10:
+                        maybe_ignited = False
+                        ignited = True
+                elif ignited:
+                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
+                        ignited = False
+                        if i - ignit_candidate_idx >= 10:
+                            # print(
+                            #    f"Another ignition at {data[ignit_candidate_idx]["time (ms)"]}"
+                            # )
+                            idxs["ignition"].append(ignit_candidate_idx)
+                        # print(f"Burnout {data[i]["time (ms)"]}")
+                        idxs["burnout"].append(i)
+                if not ignited and not maybe_ignited:
+                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05:
+                        ignit_candidate_idx = i
+                        maybe_ignited = True
+                if beta_alt < 0 and np.min(betas_alt) > 0:
+                    # print(f"Apogee at {data[i]["time (ms)"]}")
+                    idxs["apogee"] = i
+                    apogee_reached = True
+                    apogee = float(data[i]["est_alt (m)"])
+                    if ejected:
+                        betas_alt.clear()
+                if (
+                    not ejected
+                    and abs(float(data[i]["acc_z (m/s^2)"])) - np.mean(y2) > 100
+                ):
+                    # print(f"Ejection charge at {data[i]["time (ms)"]}")
+                    idxs["ejection"] = i
+                    ejected = True
+                    if apogee_reached:
+                        betas_alt.clear()
+            if len(zs) > 0 and not ground_hit:
+                if np.std(xs) + np.std(ys) + np.std(zs) > 20 and np.std(alts) < 0.1:
+                    # print(f"Ground hit at {data[i-10]["time (ms)"]}")
+                    idxs["ground_hit"] = i - 10
+                    ground_hit = True
+        betas_alt.append(beta_alt)
+    # print(idxs)
+    return idxs
+
+
 def get_rod_velocity(data: list, init_alti: float) -> float:
     for i in range(len(data)):
         if i <= 6:
@@ -109,36 +208,6 @@ def get_rod_velocity(data: list, init_alti: float) -> float:
             continue
         return float(data[i]["est_speed(m/s)"])
     return 0
-
-
-def get_ejec_idx(data: list) -> int:
-    # Find the biggest positive change in z acceleration over the recent average
-    # We're looking for sudden spikes in the direction the nose cone points
-    diffs = []
-    for i in range(len(data)):
-        if i <= 6:
-            continue
-        avg_z_accs = statistics.mean(
-            float(row["acc_z (m/s^2)"]) for row in data[i - 5 : i]
-        )
-        diffs.append(float(data[i]["acc_z (m/s^2)"]) - avg_z_accs)
-    # Now get the index where this spike occurs
-    return diffs.index(max(diffs)) + 7
-
-
-def get_touchdown_idx(data: list) -> int:
-    # Working backwards, find the first (last) significant acceleration
-    diffs = []
-    for i in reversed(range(len(data))):
-        if i < 1:
-            continue
-        if (
-            float(data[i]["acc_x (m/s^2)"]) ** 2
-            + float(data[i]["acc_y (m/s^2)"]) ** 2
-            + float(data[i]["acc_z (m/s^2)"]) ** 2
-        ) ** 0.5 > 25:
-            return i
-    return -1
 
 
 def get_stage_idxs(data: list) -> list[int]:
@@ -171,27 +240,29 @@ def generate_table(data: list) -> str:
 
     system_name = data[0]["SystemName"]
     launch_date = data[0]["LaunchTime"].strftime("%A, %B %d, %Y")
-    launch_time = ( # Convert launch time (UTC) to the correct timezone
+    launch_time = (  # Convert launch time (UTC) to the correct timezone
         data[0]["LaunchTime"]
         .astimezone(data[0]["LaunchTime"].astimezone().tzinfo)
         .strftime("%I:%M:%S %p")
     )
 
+    idxs = get_event_indexes(data)
+
     # Get starting altitude by averaging some initial readings
     init_alti = statistics.mean(float(row["est_alt (m)"]) for row in data[1:6])
-    ejec_idx = get_ejec_idx(data)
-    touchdown_idx = get_touchdown_idx(data)
-    stage_idxs = get_stage_idxs(data)
     duration_descent = dt.timedelta(
         milliseconds=(
-            int(float(data[touchdown_idx]["time (ms)"]))
-            - int(float(data[ejec_idx]["time (ms)"]))
+            int(float(data[idxs["ground_hit"]]["time (ms)"]))
+            - int(float(data[idxs["ejection"]]["time (ms)"]))
         )
     )
 
-    altitude_m = max(float(row["est_alt (m)"]) for row in data[1:]) - init_alti
+    # altitude_m = max(float(row["est_alt (m)"]) for row in data[1:]) - init_alti
+    altitude_m = float(data[idxs["apogee"]]["est_alt (m)"]) - init_alti
     velocity_ms = max(float(row["est_speed(m/s)"]) for row in data[1:])
-    accel_mss = max(float(row["acc_z (m/s^2)"]) for row in data[1 : ejec_idx - 1])
+    accel_mss = max(
+        float(row["acc_z (m/s^2)"]) for row in data[1 : idxs["ejection"] - 1]
+    )
 
     # Print these now cuz it sucks waiting on the whole file to process
     print(
@@ -199,29 +270,25 @@ def generate_table(data: list) -> str:
     )
 
     velocity_rod_ms = get_rod_velocity(data, init_alti)
-    velocity_ejec_ms = float(data[ejec_idx]["est_speed(m/s)"])
+    velocity_ejec_ms = float(data[idxs["ejection"]]["est_speed(m/s)"])
     velocity_descent_ms = (
-        float(data[ejec_idx]["baro_alt (m)"])
-        - float(data[touchdown_idx]["baro_alt (m)"])
+        float(data[idxs["ejection"]]["baro_alt (m)"])
+        - float(data[idxs["ground_hit"]]["baro_alt (m)"])
     ) / duration_descent.seconds
 
-    if len(stage_idxs) > 0:
+    if len(idxs["ignition"]) > 0:
         duration_stage1 = dt.timedelta(
             milliseconds=(
-                int(float(data[stage_idxs[0]["burnout"]]["time (ms)"]))
-                - int(float(data[stage_idxs[0]["ignition"]]["time (ms)"]))
+                int(float(data[idxs["burnout"][0]]["time (ms)"]))
+                - int(float(data[idxs["ignition"][0]]["time (ms)"]))
             )
         )
-        tilt_stage1 = float(data[stage_idxs[0]["ignition"]]["est_tilt (deg)"])
-        if len(stage_idxs) > 1:
+        tilt_stage1 = float(data[idxs["ignition"][0]]["est_tilt (deg)"])
+        if len(idxs["ignition"]) > 1:
             # hell yeah
 
-            velocity_stage2_igni_m = float(
-                data[stage_idxs[1]["ignition"]]["est_speed(m/s)"]
-            )
-            altitude_stage2_igni_m = float(
-                data[stage_idxs[1]["ignition"]]["est_alt (m)"]
-            )
+            velocity_stage2_igni_m = float(data[idxs["ignition"][1]]["est_speed(m/s)"])
+            altitude_stage2_igni_m = float(data[idxs["ignition"][1]]["est_alt (m)"])
 
             velocity_stage2_row = f"""<tr>
                     <td class="tg-cly1">… at Second Stage Ignition (m/s, mph)</td>
@@ -239,11 +306,11 @@ def generate_table(data: list) -> str:
 
             duration_stage2 = dt.timedelta(
                 milliseconds=(
-                    int(float(data[stage_idxs[1]["burnout"]]["time (ms)"]))
-                    - int(float(data[stage_idxs[1]["ignition"]]["time (ms)"]))
+                    int(float(data[idxs["burnout"][1]]["time (ms)"]))
+                    - int(float(data[idxs["ignition"][1]]["time (ms)"]))
                 )
             )
-            tilt_stage2 = float(data[stage_idxs[1]["ignition"]]["est_tilt (deg)"])
+            tilt_stage2 = float(data[idxs["ignition"][1]]["est_tilt (deg)"])
         else:
             velocity_stage2_row = ""
             altitude_stage2_row = ""
@@ -257,9 +324,9 @@ def generate_table(data: list) -> str:
         altitude_stage2_row = ""
         duration_stage2 = dt.timedelta(milliseconds=(0))
 
-    altitude_ejec_m = float(data[ejec_idx]["est_alt (m)"])
+    altitude_ejec_m = float(data[idxs["ejection"]]["est_alt (m)"])
 
-    tilt_ejec = float(data[ejec_idx]["est_tilt (deg)"])
+    tilt_ejec = float(data[idxs["ejection"]]["est_tilt (deg)"])
 
     frametimes = [int(float(row["prev_frame_time (μs)"])) for row in data[1:]]
     frametime_percentiles = statistics.quantiles(frametimes, n=100, method="inclusive")
@@ -488,7 +555,7 @@ def generate_plot(
 
 
 def generate_motion_plot(data: list) -> str:
-    range_end = get_ejec_idx(data)
+    range_end = get_event_indexes(data)["ejection"]
     ydata = []
     ydata.append([float(row["est_alt (m)"]) for row in data[1:range_end]])
     ydata.append([float(row["acc_z (m/s^2)"]) for row in data[1:range_end]])
@@ -504,7 +571,7 @@ def generate_alti_plot(data: list) -> str:
 
 
 def generate_orientation_plot(data: list) -> str:
-    range_end = get_ejec_idx(data)
+    range_end = get_event_indexes(data)["ejection"]
     ydata = []
     ydata.append(get_spin(data[1:range_end]))
     ydata.append([float(row["est_tilt (deg)"]) for row in data[1:range_end]])
