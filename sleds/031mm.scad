@@ -22,13 +22,13 @@ difference() {
         translate([0, 1.8 * in2mm, 0])
             cube([1 * in2mm, .2 * in2mm, BOARD_DEPTH]);
         translate([.8*in2mm, 2 * in2mm, 0])
-            cube([.2 * in2mm, 1.58 * in2mm, BOARD_DEPTH]);
+            #cube([.2 * in2mm, 1.6 * in2mm, BOARD_DEPTH]);
         translate([0, 4.6 * in2mm, 0])
             cube([1 * in2mm, .2 * in2mm, BOARD_DEPTH]);
         translate([.8 * in2mm, 4.6 * in2mm, 0])
             cube([.2 * in2mm, 1.8 * in2mm, BOARD_DEPTH]);
         translate([0, 6.2 * in2mm, 0])
-            cube([1 * in2mm, .2 * in2mm, BOARD_DEPTH]);
+            cube([1 * in2mm, .25 * in2mm, BOARD_DEPTH]);
     }
     translate([.1 * in2mm, 0, h]){
         translate([0, 2.3 * in2mm, 0])
