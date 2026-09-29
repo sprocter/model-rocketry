@@ -26,7 +26,7 @@ from ism330dhcx import ISM330DHCX
 from mmc5983ma import MMC5983MA
 from max17048 import MAX17048
 from gps import GPS
-from sx126x import SX1262
+from lora import SX1262
 from marg import StateEstimator
 
 import time, gc, json, vfs, machine, network, uftpd, os, deflate, esp32, random, cryptolib

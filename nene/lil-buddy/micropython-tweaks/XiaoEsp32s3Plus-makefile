@@ -1,5 +1,0 @@
-BOARD = NENE
-BOARD_VARIANT = SPIRAM_OCT
-USER_C_MODULES ="$(realpath .)/nene.cmake"
-
-include Makefile
