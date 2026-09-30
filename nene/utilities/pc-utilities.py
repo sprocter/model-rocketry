@@ -27,6 +27,7 @@ import base64
 M_2_F = 3.280839895
 MS_2_MPH = 2.2369362921
 MSS_2_G = 0.1019716213
+SENS_HZ = 45  # Sensor readings per second
 
 
 def parse_csv_header(header: str) -> dict:
@@ -103,99 +104,138 @@ def write_kml(data: list) -> None:
 
 
 def get_event_indexes(data: list) -> dict:
-    betas_alt = deque(maxlen=45)
+    # Slopes of the altitude line, calculated by fitting a line (1st order polynomial) to the last second of readings
+    betas_alt = deque(maxlen=SENS_HZ)
+
+    # Return data structure. Maps event names to their index in the data parameter
     idxs = {}
-    idxs["ignition"] = []
+    idxs["ignition"] = []  # We can have multiple ignitions (multiple stages)
     idxs["burnout"] = []
-    idxs["ground_hit"] = len(data) - 1
-    ignit_candidate = "UNKNOWN"
-    maybe_ignited = False
+
+    # Flags that flip to true when the event has been detected
+    # These will occur in the order listed (except apogee and ejection,
+    # which may occur as specified or ejection then apogee)
     ignited = False
     launched = False
     apogee_reached = False
     ejected = False
     ground_hit = False
-    ignit_candidate_idx = 999999999999
-    zs = []
-    for i in range(47, len(data)):
+
+    # We need a normalized amount of time close to ~1/10 of a second
+    moment = SENS_HZ // 10
+
+    # Stages after the first are harder to detect and require this secondary
+    # flag. It flips to true when we might have detected a second stage
+    # ignition but can't confirm it yet
+    ignit_candidate_idx = -1
+
+    # Skip the first two rows (which have metadata) and the first moment
+    for i in range(2 + moment, len(data)):
+        # We can't use the estimated altitude after ejection.
+        # But until then, it gives nice data from which to detect ignition,
+        # launch, and apogee.
+        # Ejection is determined by the accelerometer and having launched.
         if not (ejected and apogee_reached):
-            x = np.array([float(row["time (ms)"]) for row in data[i - 5 : i]])
-            y = np.array([float(row["est_alt (m)"]) for row in data[i - 5 : i]])
+            x = np.array([float(row["time (ms)"]) for row in data[i - moment : i]])
+            y = np.array([float(row["est_alt (m)"]) for row in data[i - moment : i]])
             beta_alt = np.polyfit(x, y, 1)[0]
-        else:
-            xs = np.array(
-                [float(row["h_acc_x (m/s^2)"]) for row in data[i - 15 : i - 10]]
-            )
-            ys = np.array(
-                [float(row["h_acc_y (m/s^2)"]) for row in data[i - 15 : i - 10]]
-            )
-            zs = np.array(
-                [float(row["h_acc_z (m/s^2)"]) for row in data[i - 15 : i - 10]]
-            )
-            alts = np.array([float(row["baro_alt (m)"]) for row in data[i - 10 : i]])
-        if len(betas_alt) == 45:
-            if not launched and np.mean(np.array(betas_alt) < 0.001):
-                if not ignited:
-                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05:
-                        ignit_candidate = i
+
+            if i > SENS_HZ + 2:
+                if not launched:
+                    # Significant acceleration = ignition
+                    if (
+                        not ignited
+                        and float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05
+                    ):
+                        idxs["ignition"].append(i)
                         ignited = True
-                if ignited:
-                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
-                        ignited = False
-                    elif beta_alt > 0.001:
-                        # print(f"Ignition at {data[ignit_candidate]["time (ms)"]}")
-                        idxs["ignition"].append(ignit_candidate)
-                        # print(f"Launch at {data[i]["time (ms)"]}")
+                    # Increasing altitude = launch
+                    if ignited and beta_alt > 0.001:
                         idxs["launch"] = i
                         betas_alt.clear()
                         launched = True
-            elif launched:
-                y2 = np.array(
-                    [abs(float(row["acc_z (m/s^2)"])) for row in data[i - 5 : i]]
-                )
-                if maybe_ignited:
-                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
-                        maybe_ignited = False
-                    elif i - ignit_candidate_idx >= 10:
-                        maybe_ignited = False
-                        ignited = True
-                elif ignited:
-                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
-                        ignited = False
-                        if i - ignit_candidate_idx >= 10:
-                            # print(
-                            #    f"Another ignition at {data[ignit_candidate_idx]["time (ms)"]}"
-                            # )
-                            idxs["ignition"].append(ignit_candidate_idx)
-                        # print(f"Burnout {data[i]["time (ms)"]}")
-                        idxs["burnout"].append(i)
-                if not ignited and not maybe_ignited:
-                    if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05:
-                        ignit_candidate_idx = i
-                        maybe_ignited = True
-                if beta_alt < 0 and np.min(betas_alt) > 0:
-                    # print(f"Apogee at {data[i]["time (ms)"]}")
-                    idxs["apogee"] = i
-                    apogee_reached = True
-                    apogee = float(data[i]["est_alt (m)"])
-                    if ejected:
-                        betas_alt.clear()
-                if (
-                    not ejected
-                    and abs(float(data[i]["acc_z (m/s^2)"])) - np.mean(y2) > 100
-                ):
-                    # print(f"Ejection charge at {data[i]["time (ms)"]}")
-                    idxs["ejection"] = i
-                    ejected = True
-                    if apogee_reached:
-                        betas_alt.clear()
-            if len(zs) > 0 and not ground_hit:
-                if np.std(xs) + np.std(ys) + np.std(zs) > 20 and np.std(alts) < 0.1:
-                    # print(f"Ground hit at {data[i-10]["time (ms)"]}")
-                    idxs["ground_hit"] = i - 10
-                    ground_hit = True
-        betas_alt.append(beta_alt)
-    # print(idxs)
+                elif launched:
+                    accels = np.array(
+                        [abs(float(row["acc_z (m/s^2)"])) for row in data[i - moment : i]]
+                    )
+                    # Possibly ignited, not sure yet
+                    if not ignited and ignit_candidate_idx > 0:
+                        # If we have low acceleration, cancel this candidate
+                        if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
+                            ignit_candidate_idx = -1
+                        # If it's been ~1/5 of a second, label it an ignition
+                        elif i - ignit_candidate_idx >= moment * 2:
+                            ignited = True
+                    elif ignited:
+                        # If we have low acceleration, we've burned out
+                        if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G < 1.05:
+                            ignited = False
+                            # If we have a valid ignition candidate, this was a 
+                            # stage burn so we should record the ignition as 
+                            # well
+                            if ignit_candidate_idx > 0:
+                                idxs["ignition"].append(ignit_candidate_idx)
+                                ignit_candidate_idx = -1
+                            idxs["burnout"].append(i)
+                    if not ignited and ignit_candidate_idx < 0:
+                        # If we have high acceleration, we might have an 
+                        # ignition. We won't know until we continue the 
+                        # ignition for ~1/5 of a second
+                        if float(data[i]["h_acc_z (m/s^2)"]) * MSS_2_G > 1.05:
+                            ignit_candidate_idx = i
+                    # Falling but we were climbing until now = apogee
+                    if beta_alt < 0 and np.min(betas_alt) > 0:
+                        idxs["apogee"] = i
+                        apogee_reached = True
+                        apogee = float(data[i]["est_alt (m)"])
+                    # Significant, sudden acceleration in the Z axis = ejection
+                    if (
+                        not ejected
+                        and abs(float(data[i]["acc_z (m/s^2)"])) - np.mean(accels) > 100
+                    ):
+                        idxs["ejection"] = i
+                        ejected = True
+            betas_alt.append(beta_alt)
+        else:
+            # Fall for at least a second after ejection before looking for
+            # ground hit
+            if i - idxs["ejection"] < SENS_HZ or i - idxs["apogee"] < SENS_HZ:
+                continue
+            xs = np.array(
+                [
+                    float(row["h_acc_x (m/s^2)"])
+                    for row in data[i - moment * 3 : i - moment * 2]
+                ]
+            )
+            ys = np.array(
+                [
+                    float(row["h_acc_y (m/s^2)"])
+                    for row in data[i - moment * 3 : i - moment * 2]
+                ]
+            )
+            zs = np.array(
+                [
+                    float(row["h_acc_z (m/s^2)"])
+                    for row in data[i - moment * 3 : i - moment * 2]
+                ]
+            )
+            alts = np.array(
+                [float(row["baro_alt (m)"]) for row in data[i - moment * 2 : i]]
+            )
+            if (
+                not ground_hit
+                # Significant acceleration bump / jostle
+                and np.std(xs) + np.std(ys) + np.std(zs) > 20 
+                and np.std(alts) < 0.1 # No significant altimeter change
+            ):
+                idxs["ground_hit"] = i - moment * 2
+                ground_hit = True
+
+    if "ground_hit" not in idxs:
+        idxs["ground_hit"] = (
+            len(data) - 1  # If we don't find a ground hit, assume end of data
+        )
+    print(idxs)
     return idxs
 
 
@@ -477,7 +517,7 @@ def generate_table(data: list) -> str:
             </tr>
             <tr>
                 <td class="tg-cly1">CPU Utilization (%)</td>
-                <td class="tg-cly1">{100*(statistics.mean(frametimes)/(1_000_000/45)):.2f}</td>
+                <td class="tg-cly1">{100*(statistics.mean(frametimes)/(1_000_000/SENS_HZ)):.2f}</td>
                 <td class="tg-0lax"></td>
                 <td class="tg-0lax"></td>
             </tr>
@@ -516,12 +556,12 @@ def get_spin(data: list[dict]) -> list[float]:
         x = float(x)
         y = float(y)
         if abs(y - x) < 180:
-            spin.append((y - x) * 45)
+            spin.append((y - x) * SENS_HZ)
         else:  # rollover
             if y > x:
-                spin.append((y - x - 360) * 45)
+                spin.append((y - x - 360) * SENS_HZ)
             else:
-                spin.append((y - x + 360) * 45)
+                spin.append((y - x + 360) * SENS_HZ)
     return spin
 
 
