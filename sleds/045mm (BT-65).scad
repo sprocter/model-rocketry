@@ -67,27 +67,26 @@ difference(){
             }
         }
         difference(){ // Buzzer holder
-            translate([22, 16, 0])
+           translate([22, 16, 0])
                 cylinder(h = BOARD_DEPTH, d = 30.6);
            translate([22, 16, h])
                 cylinder(h = BOARD_DEPTH+punch_depth, d = 20);
         }
-        translate([17, 31, 0])
-            cube([26, bar_size, BOARD_DEPTH]);
-        /*translate([6.5, 28.5, BOARD_DEPTH])
-            #cube([15.2,10,2.9]); // Size of Boost Converter
-        translate([9, 39.5, BOARD_DEPTH])
-            #cube([in2mm, .7*in2mm, 1]); // Size of ICM20649*/
+        translate([bar_size, 15, 0]){
+            cube([bar_size, bar_size, BOARD_DEPTH]);
+            translate([30.6, 0, 0])
+                cube([bar_size, bar_size, BOARD_DEPTH]);
+        }
     }
     // FeatherS3D mounting holes
     translate([8.5, payload_length+9, h]){
         translate([.2 * in2mm, .1 * in2mm, 0]){
             cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
+            translate([0, 1.8 * in2mm, 0])
+                cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
         }
         translate([.9 * in2mm, 0, 0]){
             translate([0, .1 * in2mm, 0])
-                cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
-            translate([0, 1.9 * in2mm, 0])
                 cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
         }
     }
@@ -146,8 +145,4 @@ difference(){
             cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
         }
     }
-    
-    // 12V boost converter mounting hole
-    translate([20, 33.5, h])
-        cylinder(h=BOARD_DEPTH + 2* punch_depth, d=2.5);
 }

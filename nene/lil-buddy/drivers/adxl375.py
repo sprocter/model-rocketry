@@ -66,10 +66,15 @@ class ADXL375:
     @micropython.native
     def decode_accel(self, reading: bytearray) -> tuple[float, float, float]:
         unpacked_reading = unpack("<hhh", reading)
+        # Remap axes to support horizontal mounting.
+        # X -> Y, Y-> X, Z -> -Z
         return (
-            unpacked_reading[0] * _ACCEL_ADJUST - self.x_err,
-            unpacked_reading[1] * _ACCEL_ADJUST - self.y_err,
-            unpacked_reading[2] * _ACCEL_ADJUST - self.z_err,
+            # unpacked_reading[0] * _ACCEL_ADJUST - self.x_err,
+            # unpacked_reading[1] * _ACCEL_ADJUST - self.y_err,
+            # unpacked_reading[2] * _ACCEL_ADJUST - self.z_err,
+            unpacked_reading[1] * _ACCEL_ADJUST - self.x_err,
+            unpacked_reading[0] * _ACCEL_ADJUST - self.y_err,
+            -1 * unpacked_reading[2] * _ACCEL_ADJUST - self.z_err,
         )
 
     @property

@@ -7,7 +7,7 @@ I2M = 25.4;
 
 
 module peg() {
-    cylinder(h = 7+DEPTH, r = .95 * 1.27);
+    cylinder(h = 7+DEPTH, r = .9 * 1.27);
 }
 
 // Walls
