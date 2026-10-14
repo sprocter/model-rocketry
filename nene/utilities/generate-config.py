@@ -80,20 +80,6 @@ def _core_config(config: dict) -> None:
     config["wifi"]["key"] = _get_input("wifi", "key", "", "Wi-Fi Password", config)
     if "lora" not in config:
         config["lora"] = {}
-    config["lora"]["lilbuddy_addr"] = _get_input_int(
-        "lora",
-        "lilbuddy_addr",
-        random.randint(0, 255),
-        "Lil-Buddy Address (0-255)",
-        config,
-    )
-    config["lora"]["bigbuddy_addr"] = _get_input_int(
-        "lora",
-        "bigbuddy_addr",
-        random.randint(0, 255),
-        "Big-Buddy Address (0-255)",
-        config,
-    )
     config["lora"]["freq"] = float(
         _get_input_int(
             "lora",
@@ -106,13 +92,10 @@ def _core_config(config: dict) -> None:
     config["lora"]["key"] = _get_input_enc(
         "lora", "key", 256, "Encryption Key (256 bit, hexlified bytes)", config
     )
-    config["lora"]["iv"] = _get_input_enc(
-        "lora",
-        "iv",
-        128,
-        "Encryption Initialization Vector (128 bit, hexlified bytes)",
-        config,
-    )
+    config["pins"]["buzzer1"] = _get_input_int("pins", "buzzer1", "10", "Buzzer Pin 1", config)
+    config["pins"]["buzzer2"] = _get_input_int("pins", "buzzer2", "11", "Buzzer Pin 2", config)
+    config["system"]["buzzer_freq_1"] = _get_input_int("system", "buzzer_freq_1", "3201", "Buzzer Frequency 1", config)
+    config["system"]["buzzer_freq_2"] = _get_input_int("system", "buzzer_freq_2", "1150", "Buzzer Frequency 2", config)
 
 
 def _basic_config(config: dict) -> None:
@@ -329,8 +312,6 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["i2c_sda"] = 8
         config["pins"]["uart_tx"] = 16
         config["pins"]["uart_rx"] = 15
-        config["pins"]["buzzer1"] = 17
-        config["pins"]["buzzer2"] = 18
         config["pins"]["spi_clk"] = 36
         config["pins"]["spi_mosi"] = 35
         config["pins"]["spi_miso"] = 37
@@ -352,8 +333,6 @@ def _configure_pins(config: dict) -> None:
         config["pins"]["i2c_sda"] = 5
         config["pins"]["uart_tx"] = 43
         config["pins"]["uart_rx"] = 44
-        config["pins"]["buzzer1"] = 1
-        config["pins"]["buzzer2"] = 2
         config["pins"]["spi_clk"] = 7
         config["pins"]["spi_mosi"] = 9
         config["pins"]["spi_miso"] = 8
@@ -426,8 +405,7 @@ def _test_AHRS() -> None:
     from adxl375 import ADXL375
     from ism330dhcx import ISM330DHCX
     from mmc5983ma import MMC5983MA
-    from orientate import orientate
-    from fusion import Fusion
+    import fusion_wrapper as ahrs
 
     default = 60
     duration = input(f"How long (in seconds) should the test run? [{default}]: ")
@@ -476,6 +454,32 @@ def _test_AHRS() -> None:
         config["orient"]["transpose"],
         config["orient"]["invert"],
     )
+
+    gain = 0.4
+    gyro_range = 500.0
+    accelerometer_reject = 10.0
+    magnetometer_reject = 10.0
+    rejection_timeout = 10.0  # Go higher? Like 15?
+    declination = -9.38333  # Declination in degrees for PSC Launch site
+    if config["orient"]["transpose"] == (2, 1, 0):
+        alignment = 1
+    elif config["orient"]["transpose"] == (2, 0, 1):
+        alignment = 2
+    else:
+        raise LookupError(
+            f"Unsupported sensor orientation: {config["orient"]["transpose"]}"
+        )
+    ahrs.init_ahrs(
+        45,
+        gain,
+        gyro_range,
+        accelerometer_reject,
+        magnetometer_reject,
+        rejection_timeout,
+        declination,
+        alignment,
+    )
+
     start_ts = time.ticks_ms()
     i = 0
     while time.ticks_diff(time.ticks_ms(), start_ts) < duration * 1000:
@@ -483,70 +487,88 @@ def _test_AHRS() -> None:
         mag.read_raw()
         accel.read_raw()
         gyro.read_raw()
-        estimator.magnetometer = mag.decode_mag(mag.buffer)
-        estimator.acceleration = accel.decode_accel(accel.buffer)
-        estimator.gyroscope = gyro.decode_gyro(gyro.buffer)
+        mag_rdg = mag.decode_mag(mag.buffer)
+        acc_rdg = accel.decode_accel(accel.buffer)
+        estimator.acceleration = acc_rdg
+        gyro_rdg = gyro.decode_gyro(gyro.buffer)
         estimator.altitude = alti.decode_alti(alti.buffer)
         i += 1
-        tilt_start = time.ticks_us()
-        tilt = estimator.tilt
-        tilt_end = time.ticks_us()
-        heading = estimator.heading
-        pitch = estimator.pitch
-        roll = estimator.roll
+        ahrs.update(gyro_rdg, acc_rdg, mag_rdg)
+        [roll, pitch, yaw, tilt] = ahrs.get_euler()
         altitude = estimator.altitude
         velocity = estimator.velocity
-        all_end = time.ticks_us()
         if i % 10 == 0:
             print(
-                f"Tilt: {tilt:.2f}\tHeading: {heading:.2f}\tPitch: {pitch:.2f}\tRoll: {roll:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}"
+                f"Tilt: {tilt:.2f}\tHeading: {roll:.2f}\tPitch: {pitch:.2f}\tRoll: {yaw:.2f}\tAltitude: {altitude:.2f}\tVelocity: {velocity:.2f}"
             )
         time.sleep_ms(23)
 
 
 def _send_lora_msg() -> None:
-    from sx1262 import SX1262
-    import struct
+    from lora import SX1262
+    from machine import Pin, SPI
+    from binascii import unhexlify
+    import struct, cryptolib
+
+    spi_bus = 1
+    baud_rate = 2_000_000
+    polarity = 0
+    phase = 0
+    tcxo_mv = (
+        3300 - 200
+    )  # "TCXO voltage should always be 200 mV less than the VCC to ensure proper operation" -- 1262 datasheet, page 7
+    clk = Pin(int(config["pins"]["spi_clk"]))
+    mosi = Pin(int(config["pins"]["spi_mosi"]))
+    miso = Pin(int(config["pins"]["spi_miso"]))
+    cs = Pin(int(config["pins"]["lora_cs"]))
+    irq = Pin(int(config["pins"]["lora_dio1"]))
+    rst = Pin(int(config["pins"]["lora_rst"]))
+    gpio = Pin(int(config["pins"]["lora_busy"]))
+
+    frequency = int(float(config["lora"]["freq"]) * 1000)
+    bandwidth = 500
+    spreading_factor = 12
+    coding_rate = 8
+    preamble_length = 12
+    tx_power = -5
+    use_CRC = False
+
+    lora_cfg = {
+        "freq_khz": frequency,
+        "sf": spreading_factor,
+        "bw": bandwidth,  # kHz
+        "coding_rate": coding_rate,
+        "preamble_len": preamble_length,
+        "output_power": tx_power,  # dBm
+        "crc_en": use_CRC,
+    }
+
+    radio = SX1262(
+        spi=SPI(
+            spi_bus,
+            baudrate=baud_rate,
+            polarity=polarity,
+            phase=phase,
+            miso=miso,
+            mosi=mosi,
+            sck=clk,
+        ),
+        cs=cs,
+        busy=gpio,
+        dio1=irq,
+        reset=rst,
+        dio3_tcxo_millivolts=tcxo_mv,
+        lora_cfg=lora_cfg,
+    )
+
+    encryption_key = unhexlify(config["lora"]["key"])
+    encryptor = cryptolib.aes(encryption_key, 1)
 
     inp = float(input("Input a floating-point number to send to the Big Buddy: "))
-    spi_bus = 1
-    clk = config["pins"]["spi_clk"]
-    mosi = config["pins"]["spi_mosi"]
-    miso = config["pins"]["spi_miso"]
-    cs = config["pins"]["lora_cs"]
-    irq = config["pins"]["lora_dio1"]
-    rst = config["pins"]["lora_rst"]
-    gpio = config["pins"]["lora_busy"]
-    radio = SX1262(spi_bus, clk, mosi, miso, cs, irq, rst, gpio)
-    frequency = config["lora"]["freq"]
-    bandwidth = 125
-    spreading_factor = 10
-    coding_rate = 8
-    sync_word = 0x12  # private
-    tx_power = -5
-    mA_limit = 125.0
-    implicit_header = False
-    use_CRC = False
-    use_LDRO = True  # Low Data-Rate Optimizer
-    radio.begin(
-        freq=frequency,
-        bw=bandwidth,
-        sf=spreading_factor,
-        cr=coding_rate,
-        syncWord=sync_word,
-        power=tx_power,
-        currentLimit=mA_limit,
-        implicit=implicit_header,
-        crcOn=use_CRC,
-    )
-    radio.forceLDRO(use_LDRO)
-    msg_header = bytearray(4)
-    msg_header[0] = config["lora"]["bigbuddy_addr"]
-    msg_header[1] = config["lora"]["lilbuddy_addr"]
-    msg_header[2] = 1
-    msg_header[3] = 0
-    payload = struct.pack(">d", inp)
-    radio.send(msg_header + payload)
+    payload = struct.pack(">fHHBHHB", inp, 0, 0, ord('X'), 0, 0, ord('X'))
+    pad = [random.getrandbits(8), random.getrandbits(8)]
+    message = encryptor.encrypt(payload + bytes(pad))
+    radio.send(message)
 
 
 def _test_wifi_ftp() -> None:
@@ -588,15 +610,15 @@ def _test_beeper() -> None:
         duration = default
     else:
         duration = int(duration)
-    p1 = PWM(Pin(config["pins"]["buzzer1"]), freq=5200, duty_u16=32768)
-    p2 = PWM(Pin(config["pins"]["buzzer2"]), freq=5200, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(config["pins"]["buzzer1"]), freq=config["system"]["buzzer_freq_1"], duty_u16=32768)
+    p2 = PWM(Pin(config["pins"]["buzzer2"]), freq=config["system"]["buzzer_freq_1"], duty_u16=32768, invert=True)
     while duration > 0:
-        if p1.freq() == 5198:
-            p1.freq(1800)
-            p2.freq(1800)
+        if p1.freq() == config["system"]["buzzer_freq_1"]:
+            p1.freq(config["system"]["buzzer_freq_2"])
+            p2.freq(config["system"]["buzzer_freq_2"])
         else:
-            p1.freq(5200)
-            p2.freq(5200)
+            p1.freq(config["system"]["buzzer_freq_1"])
+            p2.freq(config["system"]["buzzer_freq_1"])
         time.sleep(min(3, duration))
         duration -= 3
     p1.deinit()
@@ -689,7 +711,7 @@ while True:
         _send_lora_msg()
     elif inp == 6:
         _test_wifi_ftp()
-    elif inp == 76:
+    elif inp == 7:
         _test_beeper()
     elif inp == 8:
         _print_gps()
