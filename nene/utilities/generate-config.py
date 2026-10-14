@@ -664,7 +664,7 @@ def _print_gps() -> None:
     londd = int(lon[0:3])
     lonmm = float(lon[3:])
     print(
-        f"Your location is {latdd}°{latmm}{str(gps.latNS.decode("UTF-8"))} {londd}°{lonmm}{str(gps.lonEW.decode("UTF-8"))}. It is {gps.year}-{gps.month:02d}-{gps.day:02d}T{gps.hour:02d}:{gps.minute:02d}:{gps.second:02d} UTC."
+        f"Your location is {latdd}°{latmm}{str(gps.latNS.decode("utf-8"))} {londd}°{lonmm}{str(gps.lonEW.decode("utf-8"))}. It is {gps.year}-{gps.month:02d}-{gps.day:02d}T{gps.hour:02d}:{gps.minute:02d}:{gps.second:02d} UTC."
     )
 
 
