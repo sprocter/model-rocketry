@@ -304,7 +304,8 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
 
 
 def _configure_pins(config: dict) -> None:
-    config["pins"] = {}
+    if "pins" not in config:
+        config["pins"] = {}
     config["orient"] = {}
     if len((machine.I2C(scl=9, sda=8)).scan()) > 0:
         # FeatherS3D config
