@@ -110,12 +110,12 @@ _MAX_HIRES_ACCEL = const(15 * 9.80665)  # The sensor tops out at 16g and 9.80665
 
 def toggle_buzzer_freq(timer: Timer) -> None:
     global p1, p2
-    if p1.freq() == 5198:
-        p1.freq(1800)
-        p2.freq(1800)
+    if p1.freq() == buzzer_freq_1:
+        p1.freq(buzzer_freq_2)
+        p2.freq(buzzer_freq_2)
     else:
-        p1.freq(5200)
-        p2.freq(5200)
+        p1.freq(buzzer_freq_1)
+        p2.freq(buzzer_freq_1)
 
 
 def get_sensor_readings(timer: Timer) -> None:
@@ -180,8 +180,8 @@ def button_handler(boot_button: Pin) -> None:
 def enable_buzzer() -> None:
     global p1, p2
     buzzer_timer.init(mode=Timer.PERIODIC, period=3000, callback=toggle_buzzer_freq)
-    p1 = PWM(Pin(buzzer_1_pin), freq=5200, duty_u16=32768)
-    p2 = PWM(Pin(buzzer_2_pin), freq=5200, duty_u16=32768, invert=True)
+    p1 = PWM(Pin(buzzer_pin_1), freq=buzzer_freq_1, duty_u16=32768)
+    p2 = PWM(Pin(buzzer_pin_2), freq=buzzer_freq_1, duty_u16=32768, invert=True)
 
 
 def enable_sensor_recording() -> None:
@@ -597,7 +597,7 @@ def _init_board(config: dict) -> None:
 
 
 def initialize():
-    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_1_pin, buzzer_2_pin, prev_frame_time, sens_idx, sens_inv, mag_z_inv
+    global mode, reading_num, radio, initial_altitude, apogee, launch_time_ms, debounce_time, ground_readings, ascent_altis, descent_altis, init_time, estimator, previous_gps_read_ts, clock, _GPS_CONNECTED, initial_gps_altitude, initial_batt_soc, initial_mcu_temp, buzzer_pin_1, buzzer_pin_2, buzzer_freq_1, buzzer_freq_2, prev_frame_time, sens_idx, sens_inv, mag_z_inv
 
     mode = _MODE_INITIALIZE
 
@@ -664,8 +664,10 @@ def initialize():
     initial_altitude = alti.decode_alti(alti.buffer)
     apogee = 0.0
 
-    buzzer_1_pin = config["pins"]["buzzer1"]
-    buzzer_2_pin = config["pins"]["buzzer2"]
+    buzzer_pin_1 = config["pins"]["buzzer1"]
+    buzzer_pin_2 = config["pins"]["buzzer2"]
+    buzzer_freq_1 = config["system"]["buzzer_freq_1"]
+    buzzer_freq_2 = config["system"]["buzzer_freq_2"]
 
     npxl_on = True
 
