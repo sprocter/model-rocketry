@@ -47,7 +47,7 @@ _RELENG_DEVELOP = const(1)
 _RELENG_TEST_NOGPS = const(2)
 _RELENG_TEST = const(3)
 _RELENG_RELEASE = const(4)
-_RELEASE_LEVEL = const(_RELENG_DEVELOP_NOGPS)
+_RELEASE_LEVEL = const(_RELENG_RELEASE)
 
 _SENSOR_FREQ_HZ = const(45)
 _PERIOD = const(1000 / _SENSOR_FREQ_HZ)
@@ -805,7 +805,7 @@ def _write_data() -> None:
 
         with open(f"launch-{launch_num:04d}.csv.gz", "wb") as f:
             with deflate.DeflateIO(f, deflate.GZIP, 8) as d:
-                d.write(header_str.encode("UTF-8"))
+                d.write(header_str.encode("utf-8"))
                 for packed_reading in adjusted_ground_readings:
                     d.write(
                         (
@@ -813,13 +813,13 @@ def _write_data() -> None:
                                 str(x) for x in unpack(_PACK_FORMAT, packed_reading)
                             )
                             + "\n"
-                        ).encode("UTF-8")
+                        ).encode("utf-8")
                     )
                 reading = [0.0] * _FLOATS_PER_FRAME
                 for i in range(reading_num):
                     for j in range(_FLOATS_PER_FRAME):
                         reading[j] = buff.retrieve_from(i * _FLOATS_PER_FRAME + j)
-                    d.write((", ".join(str(x) for x in reading) + "\n").encode("UTF-8"))
+                    d.write((", ".join(str(x) for x in reading) + "\n").encode("utf-8"))
     else:
         if header_str is not None:
             print(header_str, end="")
