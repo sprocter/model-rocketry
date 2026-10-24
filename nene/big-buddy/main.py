@@ -18,6 +18,7 @@ from sx127x import SX1276
 from struct import unpack
 from binascii import unhexlify
 from micropython import schedule
+from array import array
 import time, json, cryptolib
 
 MODE_INITIAL = const(0)
@@ -69,6 +70,16 @@ def display_msg(message, rssi):
         line3 = f"Alt:{alt_str:>11}m"
         line4 = f"RSSI:{rssi_str:>8}dBm"
         display_small_text(line1, line2, line3, line4)
+        if message is not None:
+            display_line_countdown(60)
+        star = array('h', [5,-2,-5,-2,3,4,0,-5,-3,4,5,-2])
+        display.rect(112, 56, 16, 8, 0, True) # Hide old time
+        display.poly(115+4,59,star,2,False) # Star, empty because fill doesn't work
+        display.hline(112+4,58,7,1) # So we fill it manually
+        display.hline(114+4,59,3,1)
+        display.vline(115+4,56,5,1)
+        display.pixel(114+4,61,1)
+        display.show()
         received = modem.recv()  # Hang until we get a message
         decrypted = decryptor.decrypt(received)
         message = decrypted[:14]  # Last two bytes are random padding, discard
@@ -78,6 +89,16 @@ def display_msg(message, rssi):
 def ignore_msgs(payload):
     pass
 
+def display_line_countdown(duration: int = 5) -> None:
+    i = duration
+    while i > 3:
+        display.rect(0, 62, 128, 2, 0, True) # Hide old line
+        display.rect(112, 56, 16, 8, 0, True) # Hide old time
+        display.rect(0, 62, 128//duration * i, 2, 1, True) # New line
+        display.text(str(i), 112, 56) # New time (remaining number of seconds)
+        display.show()
+        i -= 1
+        time.sleep(1)
 
 def display_small_text(line1: str, line2: str, line3: str, line4: str) -> None:
     display.fill(0)
