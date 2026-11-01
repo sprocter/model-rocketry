@@ -92,15 +92,10 @@ class ICM20649:
         # 00011000
         self.i2c.writeto_mem(ADDR, _REG_GYRO_SMPLRT_DIV, b"\x18")
 
-        # # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
-        # # Gyroscope is in full scale, enable gyro DLPF
-        # # 00 011 11 1
-        # self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
-
         # Bits 7 and 6 are reserved, gyro DLPF is set to 3 (?? I don't get this)
-        # Gyroscope is set to 500dps, enable gyro DLPF
-        # 00 011 00 1
-        self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x19")
+        # Gyroscope is in full scale, enable gyro DLPF
+        # 00 011 11 1
+        self.i2c.writeto_mem(ADDR, _REG_GYRO_CONFIG_1, b"\x1f")
 
         # Sample rate = 1.1kHz/(1+X), X = 24, ODR = 45.8333Hz
         # 00011000

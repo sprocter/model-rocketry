@@ -75,8 +75,8 @@ class ISM330DHCX:
 
         # Configure gyroscope using CTRL2_G:
         #   1. ODR to 52 Hz 0011
-        #   2. Fullscale to 500dps 0100
-        self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x34")
+        #   2. Fullscale to 4000dps 0001
+        self.i2c.writeto_mem(ADDR, _REG_CTRL2_G, b"\x31")
         time.sleep_ms(100)  # Allow everything to wake up
 
         self.acc_x_err = offsets["ACC_X_ERR"]

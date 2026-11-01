@@ -629,7 +629,7 @@ def initialize():
 
     # Initialization parameters for the AHRS / "Fusion" module
     gain = 0.4
-    gyro_range = 500.0
+    gyro_range = 4000.0 # Consider setting to 0 to disable this -- if we exceed 98% of the gyro range, the AHRS resets, which disables accelerometer rejection. That feature is extremely necessary under the significant, sustained acceleration and deceleration experienced by a rocket.
     accelerometer_reject = 10.0
     magnetometer_reject = 10.0
     rejection_timeout = 10.0  # Go higher? Like 15?
