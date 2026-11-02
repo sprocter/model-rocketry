@@ -304,6 +304,8 @@ def _adxl375_offsets(config: dict, i2c: I2C, duration: int = 10) -> None:
 
 
 def _configure_pins(config: dict) -> None:
+    if "system" not in config:
+        config["system"] = {}
     if "pins" not in config:
         config["pins"] = {}
     config["orient"] = {}
