@@ -35,8 +35,7 @@ _REG_TEMP_CONFIG = const(0x53)  # pg 69, 8.3.18
 
 _EXPECTED_DEVICE_ID = const(0xE1)  # pg 38, 8.1.1
 
-# _GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
-_GYRO_SENSITIVITY = const(65.5)  # pg 12, 3.1
+_GYRO_SENSITIVITY = const(8.2)  # pg 12, 3.1
 _ACCEL_SENSITIVITY = const(1024)  # pg 13, 3.2
 
 _ACCEL_ADJUST = const(G_TO_MS2 / _ACCEL_SENSITIVITY)

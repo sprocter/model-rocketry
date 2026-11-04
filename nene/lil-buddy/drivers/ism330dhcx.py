@@ -27,7 +27,7 @@ _EXPECTED_DEVICE_ID = const(0x6B)  # Datasheet pg 48
 _G_TO_MS2 = const(9.80665)  # https://en.wikipedia.org/wiki/Standard_gravity
 _TEMP_ADJUST = const(256)  # Datasheet page 13
 _TEMP_OFFSET = const(25)  # Datasheet page 13
-_GYRO_ADJUST = const(0.0175)  # Datasheet pg 10
+_GYRO_ADJUST = const(0.140)  # Datasheet pg 10
 _ACCEL_ADJUST = const(0.000488 * _G_TO_MS2)  # Datasheet pg 10 #
 
 

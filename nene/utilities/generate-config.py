@@ -459,7 +459,7 @@ def _test_AHRS() -> None:
     )
 
     gain = 0.4
-    gyro_range = 500.0
+    gyro_range = 4000.0
     accelerometer_reject = 10.0
     magnetometer_reject = 10.0
     rejection_timeout = 10.0  # Go higher? Like 15?
